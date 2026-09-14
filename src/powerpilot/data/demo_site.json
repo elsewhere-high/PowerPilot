@@ -1,0 +1,46 @@
+{
+  "scenario_id": "powerpilot-afternoon-review",
+  "name": "PowerPilot 午后负荷变化演练",
+  "description": "用一组固定输入练习调度复核：新增负荷与发电偏差叠加，设备温度限制收紧，下一电价时段需要重新安排储能与柔性负荷。",
+  "start": "2026-09-11T00:00:00",
+  "alerts": [
+    "EMERGENCY_PRODUCTION_ORDER",
+    "PV_ACTUAL_BELOW_FORECAST",
+    "TRANSFORMER_TEMPERATURE_RISK",
+    "BATTERY_TEMPERATURE_DERATE",
+    "PEAK_TARIFF_APPROACHING"
+  ],
+  "site": {
+    "site_id": "powerpilot-sample-site",
+    "interval_minutes": 15,
+    "transformer_capacity_kw": 1250,
+    "transformer_temperature_limit_c": 75,
+    "transformer_hot_derate_factor": 0.68,
+    "grid_interconnection_limit_kw": 1100,
+    "battery_capacity_kwh": 800,
+    "battery_charge_max_kw": 320,
+    "battery_discharge_max_kw": 320,
+    "battery_efficiency_charge": 0.95,
+    "battery_efficiency_discharge": 0.95,
+    "initial_soc": 0.55,
+    "safety_min_soc": 0.2,
+    "safety_max_soc": 0.9,
+    "demand_charge_yuan_per_kw": 8,
+    "degradation_yuan_per_kwh": 0.08,
+    "flexible_load_kw": 120,
+    "alarm_discharge_derate": 0.35
+  },
+  "device_status": {
+    "meter": "available",
+    "pv": "available",
+    "battery": "derated",
+    "transformer": "available",
+    "production_line_a": "available"
+  },
+  "production_plan": {
+    "plan_id": "powerpilot-sample-production-v2",
+    "emergency_order": true,
+    "deferrable": false,
+    "priority": "critical"
+  }
+}

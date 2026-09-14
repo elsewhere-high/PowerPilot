@@ -1,0 +1,4300 @@
+import { createCampus3D } from "/static/campus3d.js?v=powerpilot-initial";
+import { renderMarkdown } from "/static/markdown.js?v=powerpilot-initial";
+
+const state = {
+  run: null,
+  task: null,
+  context: null,
+  candidates: [],
+  audit: [],
+  events: [],
+  evidence: null,
+  approval: null,
+  campus3d: null,
+  selectedAgent: "team_leader",
+  gateways: {},
+  language: "zh",
+  chartTick: 56,
+  liveTimer: null,
+  replayTimer: null,
+  replayCursor: null,
+  replayTime: null,
+  replaySpeedIndex: Number(window.localStorage.getItem("powerpilot.workspace.replaySpeedIndex.v2") || 0),
+  activeHistory: "new",
+  activeScenario: null,
+  agentThreads: {},
+  runtimeSessionId: window.localStorage.getItem("powerpilot.workspace.runtimeSessionId") || null,
+  campusSimulation: {
+    optimized: false,
+    time: "等待载入数据",
+    balance: "等待 CSV",
+    load: "-- kW",
+    generation: "-- kW",
+    storage: "--",
+    storageFlow: "--",
+    gridImport: "-- kW",
+    todayLoad: 0, todayGen: 0, todayGrid: 0, todayCharge: 0, todayDischarge: 0, todayCost: 0,
+    totalLoad: 0, fromGen: 0, fromStorage: 0, fromGrid: 0, toLoad: 0, toStorageCharge: 0, toGridExport: 0,
+    wastedKwh: null,
+    extraCost: null,
+  },
+  pendingExecutionScenario: null,
+  selectedDeviceId: "pcs",
+  selectedDeviceMode: "runtime",
+  energySnapshot: null,
+  monitor: null,
+  monitorTimer: null,
+  parallel: null,
+  speedMode: "normal",
+  parallelTimer: null,
+  opsEvidence: null,
+  flowPreview: null,
+  lastCampusFlow: null,
+  planLedger: [],
+  agentTeamsTask: {
+    taskId: window.localStorage.getItem("powerpilot.workspace.agentteamsTaskId") || null,
+    projectId: null,
+    teamRoomId: null,
+    taskRoomId: null,
+    workerId: null,
+    status: "IDLE",
+    worldStateLoaded: false,
+    events: [],
+    completedStages: new Set(),
+    activeStage: null,
+  },
+};
+
+const replaySpeedOptions = [
+  { label: "正常时钟", multiplier: 1 },
+  { label: "1秒=1分钟", multiplier: 60 },
+  { label: "1秒=5分钟", multiplier: 300 },
+  { label: "1秒=15分钟", multiplier: 900 },
+];
+
+try {
+  state.planLedger = JSON.parse(window.localStorage.getItem("powerpilot.workspace.planLedger") || "[]");
+} catch {
+  state.planLedger = [];
+}
+
+const agentProfiles = {
+  team_leader: {
+    name: "PowerPilot Assistant",
+    nameZh: "PowerPilot 调度助理",
+    role: "",
+    roleZh: "",
+    defaultModel: "deepseek-chat",
+    initials: "PP",
+    avatar: "/static/brand/powerpilot-mark.svg",
+    tone: "leader",
+  },
+  "powerpilot-team-leader": {
+    name: "PowerPilot Assistant",
+    nameZh: "PowerPilot 调度助理",
+    role: "",
+    roleZh: "",
+    defaultModel: "deepseek-chat",
+    initials: "PP",
+    avatar: "/static/brand/powerpilot-mark.svg",
+    tone: "leader",
+  },
+  perception_agent: {
+    name: "Perception Worker",
+    nameZh: "数据检查",
+    role: "Context validation",
+    roleZh: "运行上下文校验",
+    defaultModel: "deepseek-chat",
+    initials: "P",
+    avatar: "/static/brand/role-context.svg",
+    tone: "perception",
+  },
+  "perception-worker": {
+    name: "Perception Worker",
+    nameZh: "数据检查",
+    role: "Context validation",
+    roleZh: "运行上下文校验",
+    defaultModel: "deepseek-chat",
+    initials: "P",
+    avatar: "/static/brand/role-context.svg",
+    tone: "perception",
+  },
+  dispatch_agent: {
+    name: "Dispatch Worker",
+    nameZh: "方案规划",
+    role: "Candidate planning",
+    roleZh: "候选方案生成",
+    defaultModel: "deepseek-chat",
+    initials: "D",
+    avatar: "/static/brand/role-planning.svg",
+    tone: "dispatch",
+  },
+  "dispatch-worker": {
+    name: "Dispatch Worker",
+    nameZh: "方案规划",
+    role: "Candidate planning",
+    roleZh: "候选方案生成",
+    defaultModel: "deepseek-chat",
+    initials: "D",
+    avatar: "/static/brand/role-planning.svg",
+    tone: "dispatch",
+  },
+  audit_agent: {
+    name: "Audit Worker",
+    nameZh: "独立复核",
+    role: "Independent safety audit",
+    roleZh: "独立安全审核",
+    defaultModel: "deepseek-chat",
+    initials: "A",
+    avatar: "/static/brand/role-review.svg",
+    tone: "audit",
+  },
+  "audit-worker": {
+    name: "Audit Worker",
+    nameZh: "独立复核",
+    role: "Independent safety audit",
+    roleZh: "独立安全审核",
+    defaultModel: "deepseek-chat",
+    initials: "A",
+    avatar: "/static/brand/role-review.svg",
+    tone: "audit",
+  },
+  execution_agent: {
+    name: "Execution Worker",
+    nameZh: "仿真执行",
+    role: "Approved command mapping",
+    roleZh: "获批指令映射",
+    defaultModel: "deepseek-chat",
+    initials: "E",
+    avatar: "/static/brand/role-simulation.svg",
+    tone: "execution",
+  },
+  "execution-worker": {
+    name: "Execution Worker",
+    nameZh: "仿真执行",
+    role: "Approved command mapping",
+    roleZh: "获批指令映射",
+    defaultModel: "deepseek-chat",
+    initials: "E",
+    avatar: "/static/brand/role-simulation.svg",
+    tone: "execution",
+  },
+};
+
+const agentIntroMessages = {
+  team_leader: {
+    en: "Connect your model to explore energy data and compare proposals with PowerPilot. Simulation actions still require human confirmation.",
+    zh: "我是 PowerPilot 调度助理。连接你自己的模型后，可以一起分析数据、理解约束与讨论方案；模拟执行仍需人工确认。",
+  },
+  perception_agent: {
+    en: "I am the Perception Worker. Ask me about load, PV, SOC, tariff, transformer telemetry, device state, or production constraints.",
+    zh: "我是感知 Worker。你可以问我负荷、光伏、SOC、电价、变压器遥测、设备状态或生产约束。",
+  },
+  dispatch_agent: {
+    en: "I am the Dispatch Worker. Ask me to compare candidate schedules, flexible-load moves, storage use, or peak-tariff strategies.",
+    zh: "我是调度 Worker。你可以让我比较候选调度、柔性负荷迁移、储能使用或峰段电价策略。",
+  },
+  audit_agent: {
+    en: "I am the Audit Worker. Ask me to verify a plan against safety, SOC, transformer, grid-import, and production constraints.",
+    zh: "我是审核 Worker。你可以让我按安全、SOC、变压器、购电和生产约束复核方案。",
+  },
+  execution_agent: {
+    en: "I am the Execution Worker. Ask me about approved command mapping, idempotency, execution receipts, verification, or rollback.",
+    zh: "我是执行 Worker。你可以问我获批指令映射、幂等性、执行回执、验证或回滚。",
+  },
+};
+
+const deviceDetails = {
+  pcs: {
+    name: "PCS-01 储能变流器",
+    status: "正常",
+    metrics: [
+      ["实时功率", "0.00 kW"],
+      ["SOC", "55%"],
+      ["日充电量", "0.00 kWh"],
+      ["日放电量", "0.00 kWh"],
+      ["电池温度", "31.6°C"],
+      ["可放电功率", "1.10 MW"],
+    ],
+    runtime: "PCS 在线，BMS 通讯正常，当前处于待命状态，可参与短时削峰和应急缓冲。",
+    alerts: ["无活动告警", "SOC 低于 35% 时禁止长时放电"],
+    operations: ["01:45 Agent 读取储能状态", "01:45 维持待命，不下发充放电指令"],
+  },
+  pv: {
+    name: "PV-Array-02 光伏阵列",
+    status: "低于预测",
+    metrics: [
+      ["实时功率", "335 kW"],
+      ["预测偏差", "-18.6%"],
+      ["日发电量", "0.00 kWh"],
+      ["月发电量", "4.40 MWh"],
+      ["逆变器温度", "42.8°C"],
+      ["可用率", "98.7%"],
+    ],
+    runtime: "光伏出力低于预测，疑似云影遮挡；逆变器在线，未发现脱网。",
+    alerts: ["出力低于预测阈值", "建议在调度中降低午后光伏可用假设"],
+    operations: ["01:45 感知 Agent 读取光伏预测偏差", "01:46 调度 Agent 下调可用发电曲线"],
+  },
+  dg: {
+    name: "DG-01 发电机",
+    status: "待命",
+    metrics: [
+      ["可用功率", "457.44 kW"],
+      ["当前输出", "0.00 kW"],
+      ["日发电量", "2,726.00 kWh"],
+      ["月发电量", "27.47 MWh"],
+      ["缸套水温", "76.2°C"],
+      ["燃油余量", "68%"],
+    ],
+    runtime: "发电机处于热备状态，可在电网受限或储能不足时接入保供。",
+    alerts: ["无活动告警", "连续运行超过 4 小时需复核油量"],
+    operations: ["01:45 Agent 标记为保供备用", "01:46 审核 Agent 校验启机边界"],
+  },
+};
+
+const stateLabels = {
+  en: {
+    TASK_RECEIVED: "Task received",
+    SENSING: "Sensing",
+    CONTEXT_VALIDATED: "Context validated",
+    REPLANNING_REQUIRED: "Replanning required",
+    PLANNING: "Planning",
+    AUDITING: "Auditing",
+    AWAITING_APPROVAL: "Awaiting approval",
+    EXECUTING: "Executing",
+    VERIFYING: "Verifying",
+    COMPLETED: "Completed",
+    REJECTED: "Rejected",
+    ROLLBACK: "Rollback",
+    FAILED: "Failed",
+    IDLE: "IDLE",
+  },
+  zh: {
+    TASK_RECEIVED: "任务已接收",
+    SENSING: "感知中",
+    CONTEXT_VALIDATED: "上下文已校验",
+    REPLANNING_REQUIRED: "需要重规划",
+    PLANNING: "规划中",
+    AUDITING: "审核中",
+    AWAITING_APPROVAL: "等待人工审批",
+    EXECUTING: "执行中",
+    VERIFYING: "验证中",
+    COMPLETED: "已完成",
+    REJECTED: "已拒绝",
+    ROLLBACK: "偏差超限·已回滚保护",
+    FAILED: "失败",
+    IDLE: "空闲",
+  },
+};
+
+const actorLabels = {
+  en: {
+    "Team Leader": "Team Leader",
+    "Perception Agent": "Perception Worker",
+    "Dispatch Agent": "Dispatch Worker",
+    "Audit Agent": "Audit Worker",
+    "Human Approval": "Human Operator",
+    "Execution Agent": "Execution Worker",
+    Verification: "Verification",
+  },
+  zh: {
+    "Team Leader": "Team Leader",
+    "Perception Agent": "感知 Worker",
+    "Dispatch Agent": "调度 Worker",
+    "Audit Agent": "审核 Worker",
+    "Human Approval": "人工审批",
+    "Execution Agent": "执行 Worker",
+    Verification: "结果验证",
+  },
+};
+
+const translations = {
+  en: {
+    homeTitle: "Run library",
+    homeSubtitle: "Samples, simulations and daily records",
+    homeSearchPlaceholder: "Search scenarios and records",
+    historyCritical: "Simulation",
+    historyHigh: "High",
+    historyApproved: "Awaiting approval",
+    historyTraceReady: "Steps available",
+    historyRejected: "Rejected",
+    historyRollback: "Rollback",
+    historyWeatherTitle: "Afternoon dispatch review",
+    historyWeatherText: "Compare three proposals in a fixed afternoon scenario, review their constraints, and confirm a simulation. Run the exercise again at any time.",
+    workspaceTitle: "PowerPilot Assistant",
+    agentDirectory: "Capabilities & models",
+    workersLabel: "Specialized roles",
+    perceptionBrief: "Context validation",
+    dispatchBrief: "Candidate planning",
+    auditBrief: "Independent safety audit",
+    executionBrief: "Approved command mapping",
+    operatorPrompt: "Review how a change in operating conditions affects the current schedule.",
+    diagP1: "This exercise combines extra production demand, lower PV output, a sensor conflict and a peak-tariff window. Review the inputs before comparing its prepared proposals.",
+    diagP2: "PowerPilot separates data checks, planning, independent review and human confirmation. A proposal must clear each applicable gate before a simulation can proceed.",
+    step1Strong: "Validate the context:",
+    step1Text: "Perception Worker checks load, PV, SOC, tariff, transformer sensors, device state, and MES production constraints before any optimization.",
+    step2Strong: "Generate bounded plans:",
+    step2Text: "Dispatch Worker authors candidate scripts and 96-point schedules, but does not approve or execute equipment commands.",
+    step3Strong: "Audit before action:",
+    step3Text: "Audit Worker recomputes SOC, grid import, transformer load, production minimums, and improvement against baseline. Unsafe plans fail closed.",
+    step4Strong: "Execute only approved work:",
+    step4Text: "Execution Worker maps the approved plan to idempotent simulated EMS / PCS / load-control commands and verifies actual-vs-plan deviation.",
+    plotChip: "▥ Plot",
+    runButton: "Create dispatch simulation",
+    approveButton: "Approve B",
+    executeButton: "Execute",
+    rollbackButton: "Rollback scene",
+    visualTitle: "Operating snapshot",
+    visualSubtitle: "",
+    taskLabel: "Task",
+    plotTitle: "",
+    assetFactory: "Factory",
+    assetFactoryNote: "MES +420 kW",
+    assetPv: "PV",
+    assetPvNote: "-18.6% forecast",
+    assetStorage: "Storage",
+    assetStorageNote: "simulated PCS",
+    assetGrid: "Grid",
+    assetGridNote: "import limited",
+    assetCharge: "Charging",
+    assetChargeNote: "flexible load",
+    assetCompute: "Compute",
+    assetComputeNote: "critical load",
+    relatedTitle: "Review summary",
+    taskVersionLabel: "Plan revision",
+    riskGateLabel: "Human confirmation",
+    riskGateText: "High-risk flexible-load actions require Human Operator approval.",
+    evidenceLabel: "Evidence",
+    evidenceText: "Review the audit, human decision and simulation receipt for this run.",
+    candidatePlansTitle: "Compare proposals",
+    focusButton: "View proposal",
+    candidateEmpty: "Create a dispatch simulation to compare its reviewed proposals.",
+    traceTitle: "Activity timeline",
+    evidenceButton: "Evidence",
+    traceEmpty: "Run a simulation to see its recorded steps.",
+    chatKicker: "PowerPilot Assistant",
+    chatTitle: "Discuss energy and proposals",
+    chatIntro: "Connect your model to explore energy data and compare proposals with PowerPilot. Simulation actions still require human confirmation.",
+    chatPlaceholder: "Ask about load, storage or proposal differences…",
+    chatSend: "Send",
+    chatButton: "Chat",
+    gatewayButton: "Model settings",
+    gatewayBaseUrl: "Base URL",
+    gatewayApiKey: "API Key",
+    gatewayModel: "Model",
+    gatewayTest: "Test",
+    gatewaySave: "Save settings",
+    gatewayStored: "Gateway settings are stored locally for now.",
+    you: "You",
+    noTask: "not created",
+    noCandidates: "no candidates yet",
+    waiting: "Waiting",
+    needsHuman: "Needs human",
+    approved: "Approved",
+    notSealed: "Not sealed",
+    ready: "Ready",
+    sealed: "Sealed",
+    pendingAudit: "Pending audit",
+    auditPassed: "Audit passed",
+    rejected: "Rejected",
+    events: "events",
+    contextPending: "Waiting for a data snapshot",
+  },
+  zh: {
+    homeTitle: "运行档案",
+    homeSubtitle: "样本、演练与每日记录",
+    homeSearchPlaceholder: "搜索场景与记录",
+    historyCritical: "调度演练",
+    historyHigh: "高",
+    historyApproved: "等待审批",
+    historyTraceReady: "可查看步骤",
+    historyRejected: "已拒绝",
+    historyRollback: "已回滚",
+    historyWeatherTitle: "午后负荷变化 · 调度演练",
+    historyWeatherText: "在固定的午后场景中比较三套调度方案，查看约束复核、人工确认与模拟回执。演练可以重复运行。",
+    workspaceTitle: "PowerPilot 助理",
+    agentDirectory: "能力与模型",
+    workersLabel: "分工明确，各自复核",
+    perceptionBrief: "运行上下文校验",
+    dispatchBrief: "候选方案生成",
+    auditBrief: "独立安全审核",
+    executionBrief: "获批指令映射",
+    operatorPrompt: "查看运行条件变化后，当前计划需要重新确认的部分。",
+    diagP1: "本次演练同时设置了增产、光伏减发、传感器冲突和峰段电价。先核对输入条件，再比较预设候选方案及其复核结果。",
+    diagP2: "PowerPilot 将数据检查、方案规划、独立复核和人工确认分开呈现。每个适用环节通过后，方案才可进入模拟执行。",
+    step1Strong: "校验上下文：",
+    step1Text: "Perception Worker 在任何优化前检查负荷、光伏、SOC、电价、变压器传感器、设备状态和 MES 生产约束。",
+    step2Strong: "生成受限方案：",
+    step2Text: "Dispatch Worker 编写候选策略脚本和 96 点调度计划，但不审批、不执行设备命令。",
+    step3Strong: "行动前审核：",
+    step3Text: "Audit Worker 复算 SOC、购电功率、变压器负载、生产最小负荷和相对基线收益；不安全方案默认关闭。",
+    step4Strong: "只执行获批工作：",
+    step4Text: "Execution Worker 只把获批计划映射为幂等的模拟 EMS / PCS / 负荷控制命令，并验证计划与实际偏差。",
+    plotChip: "▥ 图表",
+    runButton: "生成调度演练",
+    approveButton: "审批 B",
+    executeButton: "执行",
+    rollbackButton: "回滚场景",
+    visualTitle: "运行快照",
+    visualSubtitle: "",
+    taskLabel: "任务",
+    plotTitle: "",
+    assetFactory: "工厂",
+    assetFactoryNote: "MES +420 kW",
+    assetPv: "光伏",
+    assetPvNote: "较预测 -18.6%",
+    assetStorage: "储能",
+    assetStorageNote: "模拟 PCS",
+    assetGrid: "电网",
+    assetGridNote: "购电受限",
+    assetCharge: "充电",
+    assetChargeNote: "柔性负荷",
+    assetCompute: "算力",
+    assetComputeNote: "关键负荷",
+    relatedTitle: "复核概况",
+    taskVersionLabel: "方案版本",
+    riskGateLabel: "人工确认",
+    riskGateText: "高风险柔性负荷动作必须经过人工操作员审批。",
+    evidenceLabel: "证据",
+    evidenceText: "查看本次复核、人工决定与模拟回执。",
+    candidatePlansTitle: "候选方案比较",
+    focusButton: "查看方案",
+    candidateEmpty: "生成一次调度演练，即可比较各方案的约束结论。",
+    traceTitle: "操作时间线",
+    evidenceButton: "证据",
+    traceEmpty: "启动演练后，这里会记录每个处理步骤。",
+    chatKicker: "PowerPilot 助理",
+    chatTitle: "讨论数据与方案",
+    chatIntro: "我是 PowerPilot 调度助理。连接你自己的模型后，可以一起分析数据、理解约束与讨论方案；模拟执行仍需人工确认。",
+    chatPlaceholder: "询问当前负荷、储能状态或方案差异…",
+    chatSend: "发送",
+    chatButton: "对话",
+    gatewayButton: "模型设置",
+    gatewayBaseUrl: "Base URL",
+    gatewayApiKey: "API Key",
+    gatewayModel: "模型",
+    gatewayTest: "测试",
+    gatewaySave: "保存配置",
+    gatewayStored: "网关设置目前保存在本地。",
+    you: "你",
+    noTask: "未创建",
+    noCandidates: "暂无候选方案",
+    waiting: "等待",
+    needsHuman: "需要人工",
+    approved: "已审批",
+    notSealed: "未封存",
+    ready: "已就绪",
+    sealed: "已封存",
+    pendingAudit: "等待审核",
+    auditPassed: "审核通过",
+    rejected: "已拒绝",
+    events: "个事件",
+    contextPending: "等待数据快照",
+  },
+};
+
+const historyThreads = {
+  weather: {
+    taskId: "PP-DEMO-001",
+    agentId: "team_leader",
+    en: {
+      opener: "Review the afternoon simulation",
+      messages: [
+        { role: "user", text: "Walk me through the PowerPilot afternoon dispatch exercise." },
+        { role: "agent", agentId: "team_leader", text: "PP-DEMO-001 is a repeatable local exercise. Its fixed inputs combine higher demand, lower PV output and a peak-tariff window." },
+        { role: "agent", agentId: "perception_agent", text: "Input card: production demand rises by 420 kW, PV is 18.6% below forecast and storage SOC is 55%. The sensor conflict is listed explicitly for review." },
+        { role: "agent", agentId: "dispatch_agent", text: "The exercise provides three candidate plans. Compare their cost, transformer headroom and storage reserve before choosing a proposal." },
+        { role: "agent", agentId: "audit_agent", text: "The prepared audit rejects Candidate A. Candidate B requires human confirmation tied to this input snapshot and plan revision." },
+        { role: "agent", agentId: "team_leader", text: "Open the plan details, confirm a reviewed candidate, then inspect the simulation receipt. The rollback exercise demonstrates how an excessive deviation is handled." },
+      ],
+    },
+    zh: {
+      opener: "复盘午后调度演练",
+      messages: [
+        { role: "user", text: "带我走一遍 PowerPilot 的午后调度演练。" },
+        { role: "agent", agentId: "team_leader", text: "PP-DEMO-001 是可重复的本地演练，使用固定输入展示增产、光伏减发与峰段电价同时出现时的复核过程。" },
+        { role: "agent", agentId: "perception_agent", text: "输入卡片列出：生产负荷增加 420 kW、光伏较预测减少 18.6%、储能 SOC 为 55%。传感器冲突单独呈现，供逐项核对。" },
+        { role: "agent", agentId: "dispatch_agent", text: "演练提供三套候选计划。可以同时查看费用、变压器余量与储能保留量，再决定采用哪一套方案。" },
+        { role: "agent", agentId: "audit_agent", text: "预设复核结果拒绝方案 A。方案 B 仍须人工确认，确认记录与这次输入快照及方案版本绑定。" },
+        { role: "agent", agentId: "team_leader", text: "先打开方案详情，确认通过复核的候选，再查看模拟回执。回退演练可以演示执行偏差超过容差后的处理过程。" },
+      ],
+    },
+  },
+};
+
+const naturalScenarios = {
+  production_load: {
+    match: (text) => /生产一区|800\s*kw|800kW|增加.*负荷|能源策略/i.test(text),
+    title: "生产一区 800kW 负荷增加评估",
+    taskId: "DEMO-PROD-800KW",
+    selectedAgent: "team_leader",
+    tools: ["get_energy_state", "get_production_rules", "generate_dispatch_plan"],
+    endpoint: "GET /energy/state?zone=production-1&date=tomorrow",
+    apiResponse: "Current load 6.8MW / Available margin 2.4MW / Storage SOC 61% / Peak tariff 18:00-22:00",
+    rag: ["生产一区保供规则", "峰段削峰策略模板", "历史 800kW 增产调度案例"],
+    cards: [
+      { title: "MCP", text: "读取当前负荷、储能 SOC、光伏预测和明日电价窗口。" },
+      { title: "RAG", text: "检索生产一区连续供电规则与增产最低保障约束。" },
+      { title: "Agent", text: "调度 Worker 生成移峰填谷方案，审核 Worker 验证变压器与 SOC 安全边界。" },
+    ],
+    steps: [
+      ["Task Understanding", "识别：生产一区明天新增 800kW 负荷，需要判断是否调整能源策略。"],
+      ["Tool Selection", "选择工具：get_energy_state、get_production_rules、generate_dispatch_plan。"],
+      ["MCP Gateway Request", "GET /energy/state?zone=production-1&date=tomorrow"],
+      ["API Response", "可用容量 2.4MW，储能 SOC 61%，18:00 后进入峰段电价。"],
+      ["Knowledge Retrieval", "RAG：检索生产规则、峰段调度模板、历史增产案例。"],
+      ["Planning Agent", "生成方案：午间提高储能充电，17:30 前完成关键产线预冷和柔性负荷前移。"],
+      ["Audit Agent", "验证：变压器负载峰值 86%，SOC 最低 38%，满足生产保供约束。"],
+      ["Leader Response", "结论：需要调整能源策略，建议采用受限削峰方案，避免峰段购电增加。"],
+    ],
+    reply: "我识别到这是“生产负荷变化后的能源策略调整”任务。当前可用容量可以覆盖新增 800kW，但如果不调整策略，18:00 后峰段购电会明显上升。建议：明天中午优先利用光伏给储能补能，17:30 前把可前移负荷完成，峰段由储能承担约 520kW，剩余 280kW 由电网补足。审核结果显示变压器峰值约 86%，SOC 最低约 38%，可以执行，但需要保留生产一区最低供电约束。",
+    executionPurpose: "执行方案 B 后，新增 800kW 生产负荷可被纳入明日计划，18:00-22:00 峰段购电被压低，变压器峰值控制在 86% 左右，储能 SOC 最低保持约 38%。",
+  },
+  ai_center: {
+    match: (text) => /AI|算力中心|6\s*mw|6MW|电力.*支持|容量/i.test(text),
+    title: "AI 算力中心 6MW 接入评估",
+    taskId: "DEMO-AIDC-6MW",
+    selectedAgent: "team_leader",
+    tools: ["get_power_capacity", "get_transformer_status", "get_storage_status"],
+    endpoint: "GET /energy/capacity?load=6MW&type=ai-datacenter",
+    apiResponse: "Current Capacity 10MW / Available 3.2MW / Transformer spare 3.6MW / Storage firm support 0.8MW",
+    rag: ["数据中心供电标准", "AI 算力中心 N+1 供电建议", "园区历史扩容案例"],
+    cards: [
+      { title: "MCP", text: "查询总容量、变压器余量、储能可支撑时长和当前负荷曲线。" },
+      { title: "RAG", text: "检索数据中心供电规范、N+1 冗余要求和历史扩容案例。" },
+      { title: "Agent", text: "规划 Agent 判断 6MW 不能直接接入，需分阶段扩容和配套储能。" },
+    ],
+    steps: [
+      ["Task Understanding", "识别：AI 算力中心新增接入评估，目标负荷 6MW。"],
+      ["Tool Selection", "选择工具：get_power_capacity、get_transformer_status、get_storage_status。"],
+      ["MCP Gateway Request", "GET /energy/capacity?load=6MW&type=ai-datacenter"],
+      ["API Response", "Current Capacity: 10MW；Available: 3.2MW；稳定支撑缺口约 2.8MW。"],
+      ["Knowledge Retrieval", "RAG：检索数据中心供电标准、N+1 冗余要求、历史扩容案例。"],
+      ["Planning Agent", "生成方案：新增 4MW 变压器容量，配置 2MWh 储能，分两阶段接入算力负荷。"],
+      ["Audit Agent", "验证安全约束：现状不支持一次性 6MW 接入；扩容后可满足冗余和峰段约束。"],
+      ["Leader Response", "结论：当前园区不支持直接新增 6MW，需要先做电力基础设施扩容。"],
+    ],
+    reply: "我识别到这是“AI 算力中心接入容量评估”任务。MCP 查询显示园区当前总容量约 10MW，可用余量约 3.2MW；你提出的 6MW 负荷超过当前可用容量，稳定缺口约 2.8MW。结合 RAG 检索到的数据中心供电标准，我不建议直接接入。建议先新增至少 4MW 变压器容量，并配置约 2MWh 储能或等效备用能力，再按 2MW + 4MW 两阶段接入。",
+    executionPurpose: "确认后将生成扩容实施任务：新增至少 4MW 变压器容量、配置约 2MWh 储能或备用能力，并把 AI 算力中心接入拆成 2MW + 4MW 两阶段，避免一次性接入造成容量风险。",
+  },
+  transformer_temperature: {
+    match: (text) => /2号变压器|2 号变压器|温度异常|变压器.*异常|发热/i.test(text),
+    title: "2号变压器温度异常分析",
+    taskId: "DEMO-TR02-TEMP",
+    selectedAgent: "team_leader",
+    tools: ["get_transformer_status", "get_thermal_history", "get_load_curve"],
+    endpoint: "GET /equipment/transformers/TR-02/status",
+    apiResponse: "TR-02 temp 92°C / Load 91% / Fan group B offline / Ambient 34°C / Oil temp rising 1.8°C per 10min",
+    rag: ["变压器温升故障案例", "风机组异常处置手册", "高温天气降载策略"],
+    cards: [
+      { title: "MCP", text: "读取 2号变压器温度、负载率、风机组、环境温度与历史曲线。" },
+      { title: "RAG", text: "检索历史温升故障、风冷系统处置手册和高温降载策略。" },
+      { title: "Agent", text: "感知 Worker 定位风险，审核 Worker 给出处置边界和降载建议。" },
+    ],
+    steps: [
+      ["Task Understanding", "识别：设备异常诊断任务，目标设备为 2号变压器。"],
+      ["Tool Selection", "选择工具：get_transformer_status、get_thermal_history、get_load_curve。"],
+      ["MCP Gateway Request", "GET /equipment/transformers/TR-02/status"],
+      ["API Response", "温度 92°C，负载率 91%，B 组风机离线，油温仍在上升。"],
+      ["Knowledge Retrieval", "RAG：检索变压器温升故障、风机组异常和高温天气降载案例。"],
+      ["Planning Agent", "生成处理建议：先切换备用风机，10 分钟内将非关键负荷下调 600kW。"],
+      ["Audit Agent", "验证：若温升继续超过 95°C，应进入人工确认和保护降载。"],
+      ["Leader Response", "结论：高概率为风机组故障叠加高负载导致，应立即降载并派检修。"],
+    ],
+    reply: "我识别到这是“设备异常诊断与风险处置”任务。MCP 返回显示 2号变压器温度约 92°C、负载率 91%，B 组风机离线，油温仍在上升。结合历史故障 RAG，最可能原因是风冷能力下降叠加高负载。建议立即切换备用风机，并在 10 分钟内下调约 600kW 非关键负荷；如果温度继续接近 95°C，应进入人工确认和保护降载流程。",
+    executionPurpose: "确认后将执行安全处置：切换备用风机、下调约 600kW 非关键负荷并创建检修工单，目标是在 10 分钟内阻止温度继续逼近 95°C 保护阈值。",
+  },
+  storage_status: {
+    match: (text) => /储能状态|当前.*储能|查询.*储能|storage status/i.test(text),
+    title: "园区储能状态查询",
+    taskId: "DEMO-MCP-STORAGE",
+    selectedAgent: "team_leader",
+    tools: ["get_storage_status"],
+    endpoint: "GET /energy/storage/status",
+    apiResponse: "SOC 55% / Available discharge 1.1MW / Available charge 0.9MW / PCS healthy / Estimated duration 42min",
+    rag: ["储能运行边界", "PCS 健康检查规则"],
+    cards: [
+      { title: "MCP", text: "基础测试：通过 MCP Gateway 查询储能状态状态。" },
+      { title: "RAG", text: "读取储能 SOC 和 PCS 健康边界说明，用于解释查询结果。" },
+      { title: "Agent", text: "Leader 返回状态摘要，并说明可放电功率和可支撑时长。" },
+    ],
+    steps: [
+      ["Task Understanding", "识别：基础状态查询，不需要生成调度方案。"],
+      ["Tool Selection", "选择工具：get_storage_status。"],
+      ["MCP Gateway Request", "GET /energy/storage/status"],
+      ["API Response", "SOC 55%，可放电 1.1MW，可充电 0.9MW，PCS healthy。"],
+      ["Knowledge Retrieval", "RAG：检索储能运行边界与 PCS 健康检查规则。"],
+      ["Leader Response", "结论：储能状态正常，可用于短时削峰，但不建议承担长时间 1MW 以上负荷。"],
+    ],
+    reply: "我已通过 MCP Gateway 查询当前园区储能状态：SOC 约 55%，PCS 健康，可放电功率约 1.1MW，可充电功率约 0.9MW，按当前状态约可稳定支撑 42 分钟。结论：储能可用于短时削峰或应急缓冲，但不建议在未补能前承担长时间 1MW 以上负荷。",
+    executable: false,
+  },
+};
+
+function $(selector) {
+  return document.querySelector(selector);
+}
+
+function $$(selector) {
+  return [...document.querySelectorAll(selector)];
+}
+
+function escapeHTML(value) {
+  return `${value ?? ""}`
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function t(key) {
+  return translations[state.language]?.[key] || translations.en[key] || key;
+}
+
+function agentName(agentId) {
+  const profile = agentProfiles[agentId] || agentProfiles.team_leader;
+  return state.language === "zh" ? profile.nameZh : profile.name;
+}
+
+function agentRole(agentId) {
+  const profile = agentProfiles[agentId] || agentProfiles.team_leader;
+  return state.language === "zh" ? profile.roleZh : profile.role;
+}
+
+function agentProfile(agentId) {
+  return agentProfiles[agentId] || agentProfiles.team_leader;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function request(url, options = {}) {
+  const response = await fetch(url, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || `Request failed (${response.status})`);
+  }
+  return response.json();
+}
+
+async function requestAllowingError(url, options = {}) {
+  const response = await fetch(url, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  const body = await response.json().catch(() => ({}));
+  return { ok: response.ok, status: response.status, body };
+}
+
+function toast(message) {
+  $("#toast").textContent = message;
+  $("#toast").classList.add("visible");
+  window.setTimeout(() => $("#toast").classList.remove("visible"), 2400);
+}
+
+const agentTeamsStageOrder = [
+  "task_created",
+  "worker_joined",
+  "tool_call",
+  "dispatch_plan",
+  "audit_verdict",
+  "awaiting_approval",
+  "execution_receipt",
+  "completed",
+];
+
+function compactId(value) {
+  if (!value) return "--";
+  const text = String(value);
+  if (text.length <= 22) return text;
+  return `${text.slice(0, 10)}...${text.slice(-8)}`;
+}
+
+function normalizeAgentTeamsEvent(event = {}) {
+  const standard = event.standard_event || event;
+  return {
+    type: standard.type || event.type || "step_started",
+    rawType: standard.raw_type || event.type || "",
+    sessionId: standard.session_id || event.session_id || state.runtimeSessionId,
+    taskId: standard.task_id || event.task_id || null,
+    projectId: standard.project_id || event.project_id || null,
+    teamRoomId: standard.team_room_id || event.team_room_id || null,
+    taskRoomId: standard.task_room_id || event.task_room_id || null,
+    workerId: standard.worker_id || standard.agent_id || event.agent_id || null,
+    agentId: standard.agent_id || event.agent_id || "agentteams_manager",
+    message: standard.message || event.message || (event.type === "stage_start" ? "" : event.stage || event.type || ""),
+    worldStateLoaded: Boolean(standard.world_state || event.world_state || event.world_state_loaded),
+    dispatchPlan: standard.dispatch_plan || event.dispatch_plan || standard.payload?.dispatch_plan || null,
+    impact: standard.impact || event.impact || standard.payload?.impact || null,
+    payload: standard.payload || event,
+    at: standard.observed_at || new Date().toISOString(),
+  };
+}
+
+function renderAgentTeamsTaskPanel() {
+  const panel = $("#agentteams-task-panel");
+  if (!panel) return;
+  const task = state.agentTeamsTask;
+  panel.hidden = task.status === "IDLE" && task.events.length === 0;
+  $("#agentteams-task-title").textContent = task.status === "IDLE" ? "等待调度请求" : "运行事件";
+  $("#agentteams-project-id").textContent = compactId(task.projectId);
+  $("#agentteams-runtime-task-id").textContent = compactId(task.taskId);
+  $("#agentteams-team-room-id").textContent = compactId(task.teamRoomId);
+  $("#agentteams-worker-id").textContent = compactId(task.workerId);
+  $("#agentteams-world-state").textContent = task.worldStateLoaded ? "已载入" : "等待";
+  $("#agentteams-task-status").textContent = task.status;
+  const timeline = $("#agentteams-timeline");
+  if (!timeline) return;
+  timeline.innerHTML = "";
+  task.events.slice(-12).forEach((item) => {
+    const row = document.createElement("p");
+    const time = new Date(item.at).toLocaleTimeString("zh-CN", { hour12: false });
+    row.innerHTML = `<strong>${escapeHTML(time)} ${escapeHTML(item.agentId || item.workerId || "AgentTeams")}</strong> ${escapeHTML(item.message).slice(0, 220)}`;
+    timeline.append(row);
+  });
+}
+
+function applyAgentTeamsEvent(event) {
+  const normalized = normalizeAgentTeamsEvent(event);
+  const task = state.agentTeamsTask;
+  if (normalized.taskId) {
+    task.taskId = normalized.taskId;
+    window.localStorage.setItem("powerpilot.workspace.agentteamsTaskId", normalized.taskId);
+  }
+  if (normalized.projectId) task.projectId = normalized.projectId;
+  if (normalized.teamRoomId) task.teamRoomId = normalized.teamRoomId;
+  if (normalized.taskRoomId) task.taskRoomId = normalized.taskRoomId;
+  if (normalized.workerId) task.workerId = normalized.workerId;
+  if (normalized.worldStateLoaded) task.worldStateLoaded = true;
+  task.status = normalized.type === "failed" ? "FAILED" : normalized.type === "completed" ? "COMPLETED" : "RUNNING";
+  task.activeStage = normalized.type;
+  const stageIndex = agentTeamsStageOrder.indexOf(normalized.type);
+  if (stageIndex >= 0) {
+    agentTeamsStageOrder.slice(0, stageIndex).forEach((stage) => task.completedStages.add(stage));
+    if (["completed", "execution_receipt"].includes(normalized.type)) task.completedStages.add(normalized.type);
+  }
+  task.events.push(normalized);
+  if (task.events.length > 80) task.events = task.events.slice(-80);
+  if (normalized.type === "dispatch_plan" && state.energySnapshot && !state.flowPreview) {
+    const flowPreview = previewFlowFromLatestSnapshot();
+    if (flowPreview) {
+      showCampusPlanPreview(flowPreview.currentFlow, flowPreview.previewFlow, {
+        title: "AgentTeams 真实调度方案",
+        source: "agentteams",
+        reason: agentTeamsPlanReason(normalized) || normalized.message || "Dispatch Worker 已生成方案。",
+        impact: normalized.impact,
+        dispatchPlan: normalized.dispatchPlan,
+      });
+    }
+  }
+  if (normalized.type === "dispatch_plan" && normalized.impact) renderAgentTeamsImpact(normalized.impact);
+  if (["execution_receipt", "completed"].includes(normalized.type) && state.flowPreview) {
+    clearCampusPlanPreview(true);
+  }
+  renderAgentTeamsTaskPanel();
+}
+
+function agentTeamsPlanReason(event = {}) {
+  const impact = event.impact || {};
+  const parts = [];
+  const saving = Number(impact.purchase_cost_savings_yuan);
+  const savingPct = Number(impact.purchase_cost_savings_percent);
+  const wasteDrop = Number(impact.energy_waste_reduction_kwh);
+  const laborDrop = Number(impact.manual_dispatch_cost_reduction_yuan);
+  if (Number.isFinite(saving) && saving > 0) {
+    parts.push(`购电成本预计下降 ¥${saving.toFixed(2)}${Number.isFinite(savingPct) && savingPct > 0 ? `（${savingPct.toFixed(1)}%）` : ""}`);
+  }
+  if (Number.isFinite(wasteDrop) && wasteDrop > 0) parts.push(`能源浪费下降 ${wasteDrop.toFixed(1)} kWh`);
+  if (Number.isFinite(laborDrop) && laborDrop > 0) parts.push(`人工调度成本下降 ¥${laborDrop.toFixed(2)}`);
+  return parts.length ? `Dispatch Worker 基于真实 world_state 生成：${parts.join("，")}。` : "";
+}
+
+function renderAgentTeamsImpact(impact = {}) {
+  const baselineFromEvent = Number(impact.baseline_total_cost_yuan || impact.baseline_cost_yuan);
+  const optimizedFromEvent = Number(impact.optimized_total_cost_yuan || impact.optimized_cost_yuan);
+  if (Number.isFinite(baselineFromEvent) && baselineFromEvent > 0 && Number.isFinite(optimizedFromEvent)) {
+    renderCostComparisonValues({
+      baseline: baselineFromEvent,
+      optimized: optimizedFromEvent,
+      status: "AgentTeams dispatch_plan 已驱动",
+    });
+    return;
+  }
+  const baseline = Number(state.parallel?.baseline_cost_yuan || state.campusSimulation?.todayCost || 0);
+  const savings = Number(impact.purchase_cost_savings_yuan || 0);
+  if (!Number.isFinite(baseline) || baseline <= 0 || !Number.isFinite(savings) || savings <= 0) return;
+  const optimized = Math.max(0, baseline - savings);
+  renderCostComparisonValues({
+    baseline,
+    optimized,
+    savings,
+    savingsPercent: Number(impact.purchase_cost_savings_percent || (savings / baseline * 100)),
+    status: "AgentTeams dispatch_plan 已驱动",
+  });
+}
+
+function renderCostComparisonValues({ baseline = 0, optimized = 0, savings = null, savingsPercent = null, status = "" } = {}) {
+  const baselineCost = Number(baseline) || 0;
+  const optimizedCost = Number(optimized) || 0;
+  const savingValue = savings === null ? baselineCost - optimizedCost : Number(savings) || 0;
+  const percentValue = savingsPercent === null
+    ? (baselineCost > 0 ? savingValue / baselineCost * 100 : 0)
+    : Number(savingsPercent) || 0;
+  $("#cost-baseline").textContent = `¥${baselineCost.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+  $("#cost-optimized").textContent = `¥${optimizedCost.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+  $("#cost-savings").textContent = `¥${savingValue.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+  $("#savings-percent").textContent = `节省 ${percentValue.toFixed(2)}%`;
+  if (status) $("#parallel-status").textContent = status;
+}
+
+function selectedTaskPlan(task = state.task) {
+  if (!task?.plans?.length) return null;
+  return task.plans.find((plan) => plan.plan_id === task.selected_plan_id) || task.plans[0];
+}
+
+function renderTaskCostComparison(task = state.task) {
+  const baseline = task?.baseline_plan;
+  const selected = selectedTaskPlan(task);
+  if (!baseline?.metrics || !selected?.metrics) return false;
+  const baselineCost = Number(baseline.metrics.total_cost_yuan || 0);
+  const optimizedCost = Number(selected.metrics.total_cost_yuan || 0);
+  renderCostComparisonValues({
+    baseline: baselineCost,
+    optimized: optimizedCost,
+    status: `多Agent真实任务成本：${selected.profile}`,
+  });
+  drawCostChart({
+    cursor: 95,
+    interval_history: [
+      { interval: 0, baseline_cumulative_cost_yuan: 0, optimized_cumulative_cost_yuan: 0 },
+      { interval: 95, baseline_cumulative_cost_yuan: baselineCost, optimized_cumulative_cost_yuan: optimizedCost },
+    ],
+    reoptimization_events: [],
+  });
+  return true;
+}
+
+async function restoreAgentTeamsTaskMirror() {
+  renderAgentTeamsTaskPanel();
+  const taskId = state.agentTeamsTask.taskId;
+  if (!taskId) return;
+  try {
+    const artifacts = await request(`/api/runtime/tasks/${encodeURIComponent(taskId)}/artifacts`);
+    artifacts
+      .filter((artifact) => artifact.artifact_type === "agentteams_task_event")
+      .forEach((artifact) => applyAgentTeamsEvent(artifact.payload));
+  } catch {
+    renderAgentTeamsTaskPanel();
+  }
+}
+
+function applyLanguage(language) {
+  state.language = language;
+  const dictionary = translations[language];
+  $$("[data-i18n]").forEach((element) => {
+    const text = dictionary[element.dataset.i18n];
+    if (text) element.textContent = text;
+  });
+  $$("[data-i18n-placeholder]").forEach((element) => {
+    const text = dictionary[element.dataset.i18nPlaceholder];
+    if (text) element.placeholder = text;
+  });
+  const button = $("#translate-button");
+  button.classList.remove("active");
+  button.textContent = language === "zh" ? "English" : "切换中文";
+  button.title = language === "zh" ? "Switch to English" : "翻译为中文";
+  button.setAttribute("aria-label", language === "zh" ? "Switch to English" : "Translate to Chinese");
+  document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
+  window.localStorage.setItem("powerpilot.workspace.language", language);
+  $$("[data-agent-name]").forEach((element) => {
+    element.textContent = agentName(element.dataset.agentName);
+  });
+  $$("[data-agent-role]").forEach((element) => {
+    element.textContent = agentRole(element.dataset.agentRole);
+  });
+  renderSelectedAgent();
+  updatePageLabels();
+  renderTask();
+  renderCandidates();
+  renderTrace();
+  renderOpsReport();
+  renderDailyLedger();
+  if (!$(".home-view").hidden) drawHomeCharts();
+  if (historyThreads[state.activeHistory]) renderThreadMessages(state.activeHistory);
+  else renderAgentThread(state.selectedAgent);
+  
+}
+
+function toggleLanguage() {
+  const next = document.documentElement.lang === "zh-CN" ? "en" : "zh";
+  applyLanguage(next);
+}
+
+function toggleAgentDirectory() {
+  const drawer = $("#agent-directory-drawer");
+  const willOpen = drawer.hidden;
+  drawer.hidden = !willOpen;
+  setActiveRail("nav-agents");
+}
+
+function setAgentDirectory(open) {
+  $("#agent-directory-drawer").hidden = !open;
+}
+
+function setOpsDrawer(open) {
+  $("#ops-drawer").hidden = !open;
+  if (open) {
+    setAgentDirectory(false);
+    setActiveRail("nav-ops");
+    loadOpsEvidence();
+  }
+}
+
+function setChatPanel(open) {
+  $("#ai-chat-panel").hidden = !open;
+}
+
+function setActiveRail(id) {
+  $$(".rail-item").forEach((button) => {
+    button.classList.toggle("active", button.id === id);
+  });
+}
+
+function setStationView(view) {
+  $$("[data-station-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.stationTab === view);
+  });
+  $$("[data-station-view]").forEach((panel) => {
+    panel.hidden = panel.dataset.stationView !== view;
+  });
+  if (view === "devices") renderDeviceDetail("pcs");
+}
+
+function renderDeviceDetail(deviceId = "pcs") {
+  state.selectedDeviceId = deviceId;
+  const detail = deviceDetails[deviceId] || deviceDetails.pcs;
+  $$("[data-device-id]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.deviceId === deviceId);
+  });
+  const target = $("#device-detail");
+  if (!target) return;
+  const mode = state.selectedDeviceMode;
+  const filteredMetrics = mode === "power" ? detail.metrics.filter(([label]) => /功率|输出|可用/.test(label))
+    : mode === "energy" ? detail.metrics.filter(([label]) => /电量|发电量|充电量|放电量/.test(label))
+    : mode === "temperature" ? detail.metrics.filter(([label]) => /温度/.test(label))
+    : mode === "soc" ? detail.metrics.filter(([label]) => /SOC|可用率|燃油/.test(label))
+    : detail.metrics;
+  const metrics = filteredMetrics.length ? filteredMetrics : detail.metrics;
+  target.innerHTML = `
+    <header>
+      <div><span>设备详情</span><strong>${escapeHTML(detail.name)}</strong></div>
+      <em>${escapeHTML(detail.status)}</em>
+    </header>
+    <div class="device-metrics">
+      ${metrics.map(([label, value]) => `
+        <div><span>${escapeHTML(label)}</span><strong>${escapeHTML(value)}</strong></div>
+      `).join("")}
+    </div>
+    <p>${escapeHTML(detail.runtime)}</p>
+    <div class="device-log-grid">
+      <section><span>${mode === "history" ? "历史数据" : "告警记录"}</span>${(mode === "history" ? [`上一小时平均功率：${metrics[0]?.[1] || "--"}`, "采样周期：15 分钟", "数据源：MCP / station.telemetry"] : detail.alerts).map((item) => `<small>${escapeHTML(item)}</small>`).join("")}</section>
+      <section><span>操作记录</span>${detail.operations.map((item) => `<small>${escapeHTML(item)}</small>`).join("")}</section>
+    </div>
+  `;
+}
+
+function setDeviceMode(mode) {
+  state.selectedDeviceMode = mode;
+  $$("[data-signal-mode], [data-device-view-mode]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.signalMode === mode || button.dataset.deviceViewMode === mode);
+  });
+  renderDeviceDetail(state.selectedDeviceId);
+}
+
+function scrollWithin(element, selector) {
+  const target = $(selector);
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "start" });
+  element?.focus?.();
+}
+
+function ensureAgentThread(agentId = state.selectedAgent) {
+  if (!state.agentThreads[agentId]) {
+    const intro = agentIntroMessages[agentId] || agentIntroMessages.team_leader;
+    state.agentThreads[agentId] = [{
+      role: "agent",
+      agentId,
+      text: state.language === "zh" ? intro.zh : intro.en,
+      intro: true,
+    }];
+  }
+  return state.agentThreads[agentId];
+}
+
+function appendChatMessage(role, text, agentId = state.selectedAgent, meta = {}) {
+  const message = document.createElement("article");
+  const profile = agentProfile(agentId);
+  message.className = `chat-message ${role} tone-${profile.tone || "leader"}${meta.action ? " actionable" : ""}`;
+  const label = role === "user" ? t("you") : agentName(agentId);
+  const avatar = document.createElement("div");
+  avatar.className = "chat-avatar";
+  if (role === "agent" && profile.avatar) {
+    const image = document.createElement("img");
+    image.src = profile.avatar;
+    image.alt = "";
+    avatar.append(image);
+  } else {
+    avatar.textContent = role === "user" ? "你" : profile.initials || "AI";
+  }
+  const content = document.createElement("div");
+  content.className = "chat-content";
+  const heading = document.createElement("header");
+  heading.className = "chat-message-head";
+  if (role === "agent") {
+    const labelNode = document.createElement("strong");
+    labelNode.className = "chat-speaker";
+    labelNode.textContent = label;
+    const agentRoleText = agentRole(agentId);
+    heading.append(labelNode);
+    if (agentRoleText) {
+      const roleNode = document.createElement("small");
+      roleNode.className = "chat-role";
+      roleNode.textContent = agentRoleText;
+      heading.append(roleNode);
+    }
+  }
+  const body = document.createElement("div");
+  body.className = "chat-message-body";
+  if (role === "agent") {
+    renderMarkdown(body, text);
+  } else {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = text;
+    body.append(paragraph);
+  }
+  if (role === "agent") content.append(heading);
+  content.append(body);
+  message.append(avatar, content);
+  if (meta.action === "confirm_execution") {
+    const actions = document.createElement("div");
+    actions.className = "chat-actions";
+    const autoExec = window.localStorage.getItem("powerpilot.workspace.autoExecute") === "true";
+    actions.innerHTML = `
+      <button class="chat-action primary" type="button" data-confirm-scenario="${escapeHTML(meta.scenarioKey || "")}">
+        ${state.language === "zh" ? "确认执行方案" : "Confirm execution"}
+      </button>
+      <button class="chat-action" type="button" data-defer-scenario="${escapeHTML(meta.scenarioKey || "")}">
+        ${state.language === "zh" ? "暂不执行" : "Defer"}
+      </button>
+      <label class="auto-exec-label">
+        <input type="checkbox" id="auto-exec-check" ${autoExec ? "checked" : ""} />
+        <span>${state.language === "zh" ? "下次不再询问，自动执行" : "Auto-execute next time"}</span>
+      </label>
+    `;
+    content.append(actions);
+  }
+  $("#chat-messages").append(message);
+  $("#chat-messages").scrollTop = $("#chat-messages").scrollHeight;
+}
+
+function addChatMessage(role, text, agentId = state.selectedAgent, options = {}) {
+  appendChatMessage(role, text, agentId, options.meta || {});
+  if (options.persist === false) return;
+  ensureAgentThread(agentId).push({ role, text, agentId, meta: options.meta || null });
+  try { localStorage.setItem("powerpilot.workspace.agentThreads", JSON.stringify(state.agentThreads)); } catch(e) {}
+}
+
+function renderAgentThread(agentId = state.selectedAgent) {
+  const thread = ensureAgentThread(agentId);
+  $("#chat-messages").innerHTML = "";
+  thread.forEach((message) => {
+    if (message.intro) {
+      const intro = agentIntroMessages[message.agentId] || agentIntroMessages.team_leader;
+      appendChatMessage(message.role, state.language === "zh" ? intro.zh : intro.en, message.agentId);
+      return;
+    }
+    appendChatMessage(message.role, message.text, message.agentId, message.meta || {});
+  });
+}
+
+function appendRuntimeStatusMessage(agentId, text) {
+  addChatMessage("agent", text, agentId, { persist: false });
+}
+
+function updateModelStatusFromPublic(config) {
+  if (!config?.agent_id) return;
+  state.gateways[config.agent_id] = {
+    baseUrl: config.base_url,
+    apiKey: config.api_key_masked,
+    model: config.model,
+    connectionStatus: config.connection_status,
+    lastError: config.last_error,
+  };
+  updateChatGatewayGate();
+}
+
+async function chatWithConfiguredModel(message) {
+  const { ok, body } = await requestAllowingError("/api/runtime/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      message,
+      session_id: state.runtimeSessionId,
+      task_id: state.task?.task_id || null,
+    }),
+  });
+  if (!ok) {
+    const detail = body.detail || "runtime request failed";
+    throw new Error(detail);
+  }
+  state.runtimeSessionId = body.session_id;
+  window.localStorage.setItem("powerpilot.workspace.runtimeSessionId", body.session_id);
+  return body;
+}
+
+async function chatWithRuntimeStream(message, handlers = {}) {
+  const response = await fetch("/api/runtime/chat/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message,
+      session_id: state.runtimeSessionId,
+      task_id: state.task?.task_id || null,
+    }),
+  });
+  if (!response.ok || !response.body) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || `Runtime stream failed (${response.status})`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let completed = null;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() || "";
+    for (const chunk of chunks) {
+      const dataLine = chunk.split("\n").find((line) => line.startsWith("data: "));
+      if (!dataLine) continue;
+      const event = JSON.parse(dataLine.slice(6));
+      applyAgentTeamsEvent(event);
+      if (event.type === "runtime_started") {
+        state.runtimeSessionId = event.session_id;
+        window.localStorage.setItem("powerpilot.workspace.runtimeSessionId", event.session_id);
+        handlers.onStart?.(event);
+      } else if (event.type === "agentteams_runtime_check") {
+        handlers.onRuntimeCheck?.(event);
+      } else if (event.type === "world_state_loaded") {
+        handlers.onWorldState?.(event);
+      } else if (event.type === "route_decided") {
+        handlers.onRoute?.(event);
+      } else if (event.type === "stage_start") {
+        handlers.onStage?.(event);
+      } else if (event.type === "worker_joined") {
+        handlers.onWorkerJoined?.(event);
+      } else if (event.type === "team_room_message") {
+        handlers.onTeamRoomMessage?.(event);
+      } else if (event.type === "agent_step") {
+        handlers.onStep?.(event);
+      } else if (event.type === "runtime_completed") {
+        completed = event;
+        handlers.onComplete?.(event);
+      } else if (event.type === "runtime_error") {
+        throw new Error(event.detail || "runtime stream failed");
+      }
+    }
+  }
+  return completed;
+}
+
+function agentHistoryForRequest(agentId) {
+  return ensureAgentThread(agentId)
+    .filter((item) => !item.intro && item.text)
+    .slice(-12)
+    .map((item) => ({
+      role: item.role === "user" ? "user" : "assistant",
+      content: item.text,
+    }));
+}
+
+function isInternalAgentTeamsMessage(text = "") {
+  const trimmed = String(text).trim();
+  return /^(Let me|I need to|I will|I've |I have |The admin's|Given the|Now I|This is a direct|Earlier |I sent the|I'll |I'm )/i.test(trimmed)
+    || trimmed.includes("[PowerPilot live request]")
+    || trimmed.includes("[PowerPilot world_state]");
+}
+
+function isDisplayableAgentTeamsReply(text = "") {
+  const trimmed = String(text).trim();
+  return trimmed.length > 0 && trimmed.length <= 280 && !isInternalAgentTeamsMessage(trimmed);
+}
+
+function compactAgentTeamsWorkNote(agentId) {
+  const name = agentName(agentId);
+  if (agentId === "perception-worker") return `${name} 已读取当前园区 world_state 并校验运行上下文。`;
+  if (agentId === "dispatch-worker") return `${name} 已参与调度计算，方案结果会进入右侧预览和指标。`;
+  if (agentId === "audit-worker") return `${name} 已参与独立复核，约束和风险进入证据链。`;
+  if (agentId === "execution-worker") return `${name} 已等待获批方案，执行回执后才更新园区状态。`;
+  if (agentId === "powerpilot-team-leader") return `${name} 已接收请求并协调 Worker。`;
+  return `${name} 已产生真实 AgentTeams 工作事件。`;
+}
+
+async function chatWithSelectedAgent(agentId, message, history = []) {
+  const { ok, body } = await requestAllowingError(`/api/agents/${agentId}/chat`, {
+    method: "POST",
+    body: JSON.stringify({ message, history }),
+  });
+  if (!ok) {
+    throw new Error(body.detail || "agent chat request failed");
+  }
+  return body;
+}
+
+function agentTeamsRuntimeProblemMessage(error) {
+  const detail = error?.message || "Live AgentTeams runtime is not ready.";
+  return state.language === "zh"
+    ? `AgentTeams 连接暂时不可用。\n\n${detail}\n\n请启动你配置的 AgentTeams 服务，确认 Matrix 连接后重试。`
+    : `AgentTeams is temporarily unavailable.\n\n${detail}\n\nStart your configured AgentTeams runtime, verify the Matrix connection, then retry.`;
+}
+
+function campusPromptContext() {
+  const sim = state.campusSimulation || {};
+  const hasSnapshot = Boolean(state.energySnapshot);
+  const activeFlow = state.flowPreview?.currentFlow || {};
+  const previewFlow = state.flowPreview?.previewFlow || null;
+  const monitor = state.monitor || {};
+  const recentEvents = Array.isArray(monitor.events) ? monitor.events.slice(-5) : [];
+  const abnormalEvents = recentEvents.filter((event) => ["V1_INVALIDATED", "AGENTTEAMS_WOKEN", "V2_REPLANNED_AND_AUDITED"].includes(event.kind));
+  const curtailKw = Number(activeFlow.curtail || 0);
+  const gridKw = Number(activeFlow.grid_load || 0);
+  const statusConclusion = hasSnapshot
+    ? (abnormalEvents.length ? "状态变化，需要说明异常依据" : "运行正常，当前方案有效，AgentTeams 休眠")
+    : "未接入数据，不能判断园区是否正常";
+  const flowText = (flow = {}) => (
+    `发电到用电 ${Number(flow.solar_load || 0).toFixed(1)} kW；`
+    + `发电到储能 ${Number(flow.solar_storage || 0).toFixed(1)} kW；`
+    + `储能到用电 ${Number(flow.storage_load || 0).toFixed(1)} kW；`
+    + `电网到用电 ${Number(flow.grid_load || 0).toFixed(1)} kW；`
+    + `发电上网 ${Number(flow.solar_grid || 0).toFixed(1)} kW；`
+    + `限发 ${Number(flow.curtail || 0).toFixed(1)} kW。`
+  );
+  const lines = [
+    "[当前 3D 运行快照状态]",
+    `CSV 数据: ${hasSnapshot ? "已接入" : "未接入"}`,
+    `沙盘时间: ${hasSnapshot ? sim.time || "--" : "等待 CSV"}`,
+    `发电: ${hasSnapshot ? sim.generation || "--" : "--"}`,
+    `用电: ${hasSnapshot ? sim.load || "--" : "--"}`,
+    `储能: ${hasSnapshot ? sim.storage || "--" : "--"}`,
+    `电网购电: ${hasSnapshot ? sim.gridImport || "--" : "--"}`,
+    `SOC: ${hasSnapshot && Number.isFinite(sim.socPercent) ? `${Math.round(sim.socPercent)}%` : "--"}`,
+    `状态结论: ${statusConclusion}`,
+    `当前方案: ${monitor.plan_version || "V1"} ${abnormalEvents.length ? "需要复核" : "有效"}`,
+    `AgentTeams: ${monitor.agentteams_awake ? "已唤醒" : "休眠"}`,
+    `最近时段汇报: ${recentEvents.map((event) => `${event.kind}: ${event.detail}`).join(" | ") || "暂无事件"}`,
+    `累计未消纳电量: ${hasSnapshot && Number.isFinite(sim.wastedKwh) ? `${sim.wastedKwh.toFixed(1)} kWh` : "--"}`,
+    `累计购电支出: ${hasSnapshot && Number.isFinite(sim.extraCost) ? `¥${sim.extraCost.toFixed(1)}` : "--"}`,
+    `当前流向: ${flowText(activeFlow)}`,
+  ];
+  if (previewFlow) {
+    lines.push(`正在预览的新流向: ${flowText(previewFlow)}`);
+  } else {
+    lines.push("正在预览的新流向: 无。");
+  }
+  return lines.join("\n");
+}
+
+function messageWithCampusContext(message) {
+  return `${message}\n\n${campusPromptContext()}`;
+}
+
+function isGatewayMissingError(error) {
+  return /model config|gateway|网关|api key|base url|not saved|not configured|未配置|未保存/i.test(error?.message || "");
+}
+
+function gatewayFailureMessage(agentId, error) {
+  if (isGatewayMissingError(error)) {
+    return state.language === "zh"
+      ? `还没有为 ${agentName(agentId)} 配置真实模型网关，所以我不能假装已经和 Agent 对话。请在弹出的「模型网关」里填写 Base URL、API Key 和模型名，保存并测试成功后再发送。`
+      : `${agentName(agentId)} does not have a real model gateway configured yet. Configure Base URL, API key, and model, then save and test before chatting.`;
+  }
+  return state.language === "zh"
+    ? `模型网关调用失败：${error?.message || "未知错误"}。这条消息没有生成本地假回答，请检查网关地址、模型名、API Key 或服务可用性后重试。`
+    : `Model gateway call failed: ${error?.message || "unknown error"}. No local fallback answer was generated. Check the gateway URL, model, API key, or service availability and retry.`;
+}
+
+async function revealRuntimeSteps(runtime, runtimeStatus) {
+  for (const step of runtime.steps) {
+    runtimeStatus.querySelector("span").textContent = state.language === "zh"
+      ? `${agentName(step.agent_id)} 正在输出`
+      : `${agentName(step.agent_id)} is responding`;
+    await sleep(260);
+    addChatMessage("agent", step.response, step.agent_id, {
+      meta: { model: step.model, runtimeSessionId: runtime.session_id },
+    });
+    await sleep(420);
+  }
+}
+
+async function confirmScenarioExecution() {
+  const scenario = state.pendingExecutionScenario || state.activeScenario;
+  if (!scenario || scenario.executable === false) return;
+  const autoExec = $("#auto-exec-check")?.checked;
+  if (autoExec !== undefined) window.localStorage.setItem("powerpilot.workspace.autoExecute", String(autoExec));
+  $$("[data-confirm-scenario], [data-defer-scenario]").forEach((b) => b.disabled = true);
+  if (state.flowPreview) ledgerRecord("adopted", state.flowPreview.currentFlow, state.flowPreview.previewFlow);
+  clearCampusPlanPreview(true);
+
+  const taskId = state.task?.task_id;
+  if (!taskId) {
+    toast("没有可执行的任务；请先上传历史数据或运行调度场景");
+    return;
+  }
+  try {
+    await request(`/api/tasks/${taskId}/approval-only`, {
+      method: "POST",
+      body: JSON.stringify({ approved: true, approver: "operator", reason: "用户确认执行优化方案" }),
+    });
+    const executed = await request(`/api/tasks/${taskId}/execute-approved`, { method: "POST" });
+    state.task = executed;
+    state.approval = executed.approval;
+    renderTask(); renderTrace(); renderCandidates(); await applySnapshotToCampus();
+    const baseline = state.parallel?.baseline_cost_yuan ?? "--";
+    const opt = state.parallel?.optimized_cost_yuan ?? "--";
+    const save = state.parallel?.savings_yuan ?? "--";
+    const msg = state.language === "zh"
+      ? `方案已执行。Agent Teams 优化电费 ¥${opt}，比原始策略 ¥${baseline} 节省 ¥${save}。`
+      : `Executed. Optimized ¥${opt} vs baseline ¥${baseline}, saved ¥${save}.`;
+    addChatMessage("agent", msg, "team_leader");
+  } catch (err) {
+    toast(err.message || "执行失败");
+    addChatMessage("agent", `执行失败：${err.message || "未知错误"}`, "team_leader");
+  }
+  state.pendingExecutionScenario = null;
+}
+
+async function deferScenarioExecution() {
+  const scenario = state.pendingExecutionScenario || state.activeScenario;
+  if (!scenario || scenario.executable === false) return;
+  const autoExec = $("#auto-exec-check")?.checked;
+  if (autoExec !== undefined) window.localStorage.setItem("powerpilot.workspace.autoExecute", String(autoExec));
+  $$("[data-confirm-scenario], [data-defer-scenario]").forEach((b) => b.disabled = true);
+  if (state.flowPreview) ledgerRecord("rejected", state.flowPreview.currentFlow, state.flowPreview.previewFlow);
+
+  const taskId = state.task?.task_id;
+  if (taskId) {
+    try {
+      const rej = await request(`/api/tasks/${taskId}/approval-only`, {
+        method: "POST",
+        body: JSON.stringify({ approved: false, approver: "operator", reason: "用户暂不执行" }),
+      });
+      state.task = rej; renderTask();
+    } catch (e) { /* ignore */ }
+  }
+  clearCampusPlanPreview(false);
+  addChatMessage("agent", "已暂不执行。任务保留在等待人工确认状态。", "team_leader");
+  state.pendingExecutionScenario = null;
+}
+
+function renderThreadMessages(threadKey = state.activeHistory) {
+  const thread = historyThreads[threadKey];
+  if (!thread) return;
+  const transcript = thread[state.language] || thread.en;
+  $("#chat-messages").innerHTML = "";
+  transcript.messages.forEach((message) => {
+    appendChatMessage(message.role, message.text, message.agentId || thread.agentId);
+  });
+}
+
+function findNaturalScenario(message) {
+  return null;
+}
+
+function buildScenarioEvents(scenario) {
+  return scenario.steps.map(([label, detail], index) => ({
+    event_id: `STEP-${String(index + 1).padStart(2, "0")}`,
+    timestamp: new Date(Date.now() + index * 1000).toISOString(),
+    actor: index === 0 || label === "Leader Response" ? "Team Leader"
+      : label.includes("Planning") ? "Dispatch Agent"
+      : label.includes("Audit") ? "Audit Agent"
+      : label.includes("Knowledge") ? "Perception Agent"
+      : "Team Leader",
+    to_state: index === scenario.steps.length - 1 ? "COMPLETED" : index >= 5 ? "AUDITING" : "SENSING",
+    reason: `${label}: ${detail}`,
+  }));
+}
+
+async function applyNaturalScenario(scenario) {
+  state.activeScenario = scenario;
+  state.activeHistory = "new";
+  state.selectedAgent = scenario.selectedAgent || "team_leader";
+  state.task = {
+    task_id: scenario.taskId,
+    task_version: 1,
+    state: scenario.executable === false ? "COMPLETED" : "AWAITING_APPROVAL",
+    trace_id: `TRACE-${scenario.taskId}`,
+    evidence_sha256: scenario.executable === false ? `demo-${scenario.taskId.toLowerCase()}-sha256` : null,
+  };
+  state.context = {
+    context_hash: `ctx-${scenario.taskId.toLowerCase()}-mcp-rag-observable`,
+    task_version: 1,
+  };
+  state.candidates = scenario.cards.map((card, index) => ({
+    candidate_id: `Capability-${index + 1}`,
+    name: card.title,
+    cost_yuan: 0,
+    max_power_kw: index === 0 ? 0 : 800 + index * 180,
+    soc_min_percent: 38,
+    soc_max_percent: 82,
+    transformer_load_percent: scenario.taskId.includes("AIDC") ? 96 : 86,
+    summary: card.text,
+  }));
+  state.audit = scenario.cards.map((card, index) => ({
+    candidate_id: `Capability-${index + 1}`,
+    verdict: "audit_approved",
+    reason: card.text,
+  }));
+  state.events = buildScenarioEvents(scenario);
+  state.evidence = {
+    task_id: scenario.taskId,
+    mcp_gateway: scenario.endpoint,
+    api_response: scenario.apiResponse,
+    rag_sources: scenario.rag,
+    trace_steps: scenario.steps,
+  };
+  state.approval = scenario.executable === false ? { status: "not_required_for_demo" } : null;
+  state.pendingExecutionScenario = scenario.executable === false ? null : scenario;
+  setWorkspaceMode("nav-chat");
+  renderSelectedAgent();
+  renderTask();
+  renderCandidates();
+  renderTrace();
+  renderOpsReport();
+  await applySnapshotToCampus();
+}
+
+function scenarioConversation(scenario) {
+  const finalPrompt = scenario.executable === false
+    ? "这次是基础查询任务，不需要执行设备策略。我已经把结果写入 Trace 和证据区。"
+    : `我建议执行方案 B。目标是：${scenario.executionPurpose}`;
+  return [
+    {
+      agentId: "team_leader",
+      text: `Task Received: ${scenario.title}\nTask Type: ${scenario.taskId === "DEMO-TR02-TEMP" ? "Fault diagnosis + emergency dispatch" : scenario.taskId === "DEMO-AIDC-6MW" ? "Capacity planning + infrastructure dispatch" : "Operational dispatch assessment"}\nAssigned Agents: Perception Agent, Knowledge Agent, Planning Agent, Safety Audit Agent, Execution Agent\nCurrent State: ANALYZING`,
+    },
+    {
+      agentId: "team_leader",
+      text: `Analysis Complete.\n\n${scenario.reply}\n\nStructured artifacts have been written to State / Constraint / Plan / Action / Evidence. Worker Agents did not produce chat messages; they produced auditable objects.`,
+    },
+    {
+      agentId: "team_leader",
+      text: finalPrompt,
+      meta: scenario.executable === false ? null : { action: "confirm_execution", scenarioKey: scenario.key },
+    },
+  ];
+}
+
+async function runScenarioConversation(scenario) {
+  applyNaturalScenario(scenario);
+  addChatMessage("agent", scenario.taskId === "DEMO-MCP-STORAGE"
+    ? "Task Received: Storage state query\nCurrent State: COLLECTING_STATE"
+    : `Task Received: ${scenario.title}\nCurrent State: COLLECTING_STATE`, "team_leader");
+  const messages = scenarioConversation(scenario);
+  for (const message of messages) {
+    await sleep(420);
+    addChatMessage("agent", message.text, message.agentId, { meta: message.meta });
+  }
+}
+
+function scenarioFollowupConversation(message, scenario) {
+  const lower = message.toLowerCase();
+  const asksPerception = /@?感知|perception|外部数据|实时|状态|容量|上下文/.test(lower);
+  const asksEstimate = /估算|继续|可以|方案|重新|保守|经济|测算|support|支持/.test(lower);
+  if (!asksPerception && !asksEstimate) {
+    return [
+      {
+        agentId: "team_leader",
+        text: `我会沿用当前任务上下文继续分析：${scenario.title}。当前可用外部数据为演示预设数据：${scenario.apiResponse}。`,
+      },
+      {
+        agentId: "team_leader",
+        text: localLeaderReply(message),
+      },
+    ];
+  }
+  return [
+    {
+      agentId: "team_leader",
+      text: `Runtime Continue.\n\nState updated by Perception Agent.\nKnowledge constraints applied by Knowledge Agent.\nPlan candidates regenerated by Planning Agent.\nSafety verdict produced by Audit Agent.\nAction object prepared by Execution Agent.\n\n右侧已更新 State / Constraint / Plan / Action / Evidence。`,
+    },
+    {
+      agentId: "team_leader",
+      text: `最终建议：采用方案 B。${scenario.executionPurpose}`,
+      meta: scenario.executable === false ? null : { action: "confirm_execution", scenarioKey: scenario.key },
+    },
+  ];
+}
+
+function scenarioStrategyCode(scenario) {
+  if (scenario.taskId === "DEMO-AIDC-6MW") {
+    return `policy "AIDC_6MW_PHASED_ACCESS" {
+  require capacity.available >= 3.2MW
+  require transformer.add_capacity >= 4MW
+  require storage.reserve >= 2MWh
+
+  phase_1 {
+    connect_load = 2MW
+    reserve_margin >= 20%
+  }
+
+  phase_2 {
+    connect_load = 4MW
+    condition = audit.passed && transformer.temperature < 85C
+  }
+
+  fallback {
+    shed_flexible_load = 600kW
+    notify = HumanOperator
+  }
+}`;
+  }
+  if (scenario.taskId === "DEMO-TR02-TEMP") {
+    return `policy "TR02_THERMAL_PROTECTION" {
+  if transformer.TR02.temperature >= 92C {
+    fan.backup = ON
+    shed.non_critical_load = 600kW
+    create_work_order = true
+  }
+
+  if transformer.TR02.temperature >= 95C {
+    require HumanOperator.approval
+    enter_protection_derating = true
+  }
+}`;
+  }
+  return `policy "PRODUCTION_1_800KW_SHIFT" {
+  require production.zone == "一区"
+  require added_load == 800kW
+  charge_storage.window = "11:00-15:30"
+  discharge_storage.window = "18:00-22:00"
+  discharge_storage.power = 520kW
+  shift_flexible_load = 280kW
+
+  constraints {
+    transformer.peak_load <= 86%
+    storage.soc_min >= 38%
+    production_min_load = protected
+  }
+}`;
+}
+
+function scenarioStateObject(scenario) {
+  if (scenario.taskId === "DEMO-TR02-TEMP") {
+    return {
+      asset_id: "TR-02",
+      timestamp: "2026-08-06T13:40:00+08:00",
+      temperature_c: 92,
+      load_ratio: 0.91,
+      oil_temp_rise_c_per_10min: 1.8,
+      cooling_status: { fan_group_A: "online", fan_group_B: "offline" },
+      risk_level: "high",
+    };
+  }
+  if (scenario.taskId === "DEMO-AIDC-6MW") {
+    return {
+      request_load_mw: 6,
+      current_capacity_mw: 10,
+      available_capacity_mw: 3.2,
+      transformer_spare_mw: 3.6,
+      storage_firm_support_mw: 0.8,
+      capacity_gap_mw: 2.8,
+      risk_level: "high",
+    };
+  }
+  return {
+    zone: "production-1",
+    added_load_kw: 800,
+    current_load_mw: 6.8,
+    available_margin_mw: 2.4,
+    storage_soc_percent: 61,
+    peak_tariff_window: "18:00-22:00",
+    risk_level: "medium",
+  };
+}
+
+function scenarioKnowledgeObject(scenario) {
+  if (scenario.taskId === "DEMO-TR02-TEMP") {
+    return {
+      rule: "Transformer cooling failure",
+      source: "Maintenance Manual v3.2",
+      constraint: "If oil temperature rising > 1.5C / 10min, avoid overload operation.",
+      applied: true,
+    };
+  }
+  if (scenario.taskId === "DEMO-AIDC-6MW") {
+    return {
+      rule: "AI data center power onboarding",
+      source: "Data Center Power Standard v2.1",
+      constraint: "Critical compute load requires reserved margin and staged commissioning.",
+      applied: true,
+    };
+  }
+  return {
+    rule: "Production continuity during peak tariff",
+    source: "Production Zone 1 Dispatch Rulebook",
+    constraint: "Protect minimum production load and keep storage SOC above emergency reserve.",
+    applied: true,
+  };
+}
+
+function scenarioPlanObject(scenario) {
+  if (scenario.taskId === "DEMO-AIDC-6MW") {
+    return {
+      objective: "Support 6MW AI compute load without violating capacity constraints.",
+      selected_plan: "B",
+      alternatives: {
+        A: "direct connection, rejected",
+        B: "4MW transformer expansion + 2MWh storage + phased access",
+        C: "larger redundancy, approved but high cost",
+      },
+    };
+  }
+  if (scenario.taskId === "DEMO-TR02-TEMP") {
+    return {
+      objective: "Stop transformer thermal rise while preserving critical load.",
+      selected_plan: "B",
+      actions: ["turn_on_backup_fan", "shed_non_critical_load_600kw", "create_work_order"],
+    };
+  }
+  return {
+    objective: "Minimize peak energy cost while preserving production priority.",
+    selected_plan: "B",
+    optimization: "0.7 * electricity_price + 0.3 * transformer_temperature_risk",
+  };
+}
+
+function scenarioActionObject(scenario) {
+  if (scenario.executable === false) {
+    return { action_required: false, reason: "read-only status query" };
+  }
+  return {
+    approval_required: true,
+    execution_mode: "simulated EMS / PCS / load-control command mapping",
+    idempotency_key: `IDEMP-${scenario.taskId}-PLAN-B`,
+    expected_effect: scenario.executionPurpose,
+  };
+}
+
+function scenarioEvidenceObject(scenario) {
+  return {
+    trace_id: `TRACE-${scenario.taskId}`,
+    context_hash: `ctx-${scenario.taskId.toLowerCase()}-mcp-rag-observable`,
+    mcp_call: scenario.endpoint,
+    rag_source_count: scenario.rag.length,
+    audit_verdict: scenario.executable === false ? "not_required" : "plan_b_passed",
+  };
+}
+
+function scenarioAuditReport(scenario) {
+  if (scenario.taskId === "DEMO-AIDC-6MW") {
+    return "审核报告：A 直接接入未通过，原因是当前可用余量 3.2MW 小于 6MW。B 分阶段扩容通过：新增 4MW 变压器容量与 2MWh 储能后，容量、冗余和峰段约束可满足。C 通过但投资冗余偏高。";
+  }
+  if (scenario.taskId === "DEMO-TR02-TEMP") {
+    return "审核报告：温度 92°C、负载率 91%、B 组风机离线。建议动作不直接越权执行，只允许备用风机切换、非关键负荷下调和检修工单；若接近 95°C 必须进入人工确认。";
+  }
+  if (scenario.taskId === "DEMO-MCP-STORAGE") {
+    return "审核报告：本次为状态查询，没有设备动作，不需要执行审批。储能 SOC 55%、PCS 健康，可支撑短时削峰。";
+  }
+  return "审核报告：方案 B 通过。容量可覆盖新增 800kW，但峰段成本风险需要削峰；变压器峰值约 86%，SOC 最低约 38%，满足生产一区保供约束。";
+}
+
+function scenarioAgentArtifacts(scenario) {
+  return [
+    ["State", scenarioStateObject(scenario)],
+    ["Retrieved Knowledge", scenarioKnowledgeObject(scenario)],
+    ["Constraint", {
+      soc_min_percent: scenario.taskId === "DEMO-AIDC-6MW" ? 45 : 30,
+      transformer_load_max_percent: scenario.taskId === "DEMO-TR02-TEMP" ? 85 : 90,
+      production_priority: scenario.taskId === "DEMO-PROD-800KW" ? "HIGH" : "NORMAL",
+      human_approval_required: scenario.executable !== false,
+    }],
+    ["Plan", scenarioPlanObject(scenario)],
+    ["Action", scenarioActionObject(scenario)],
+    ["Evidence", scenarioEvidenceObject(scenario)],
+  ];
+}
+
+async function continueScenarioConversation(message) {
+  const scenario = state.activeScenario;
+  if (!scenario) return false;
+  const messages = scenarioFollowupConversation(message, scenario);
+  state.pendingExecutionScenario = scenario.executable === false ? null : scenario;
+  state.task = {
+    ...(state.task || {}),
+    state: scenario.executable === false ? "COMPLETED" : "AWAITING_APPROVAL",
+  };
+  renderTask();
+  renderTrace();
+  for (const item of messages) {
+    await sleep(420);
+    addChatMessage("agent", item.text, item.agentId, { meta: item.meta });
+  }
+  return true;
+}
+
+function localLeaderReply(message) {
+  const lower = message.toLowerCase();
+  const zh = state.language === "zh";
+  if (state.activeScenario) {
+    if (lower.includes("为什么") || lower.includes("原因") || lower.includes("why")) {
+      return `基于刚才这次「${state.activeScenario.title}」的上下文，我的判断依据不是单点数据，而是三类证据：第一，MCP 返回的实时状态是 ${state.activeScenario.apiResponse}；第二，RAG 召回了 ${state.activeScenario.rag.join("、")}；第三，审核 Worker 已经检查容量、设备和安全约束。所以我才给出刚才的建议。`;
+    }
+    if (lower.includes("风险") || lower.includes("risk")) {
+      return `这次任务的主要风险边界有三个：容量余量是否足够、关键设备是否被推到过载区间、策略是否违反生产或运行规则。右侧 Trace 里的 Audit Agent 步骤就是专门用来约束这些风险的。`;
+    }
+    if (lower.includes("trace") || lower.includes("步骤") || lower.includes("mcp") || lower.includes("rag")) {
+      return `这次 Trace 的关键链路是：${state.activeScenario.steps.map(([label]) => label).join(" -> ")}。MCP 请求是 ${state.activeScenario.endpoint}，RAG 来源是 ${state.activeScenario.rag.join("、")}。`;
+    }
+    return `我还在沿用刚才「${state.activeScenario.title}」的长上下文。你可以继续改约束、追问原因、要求看风险，或让我基于同一上下文重新给一个更保守/更激进的方案。`;
+  }
+  const taskState = state.task ? stateLabels[state.language][state.task.state] || state.task.state : t("noTask");
+  const task = state.task ? `${state.task.task_id} / V${state.task.task_version} / ${taskState}` : t("noTask");
+  const candidateSummary = state.candidates.length
+    ? state.candidates.map((candidate) => {
+      const verdict = state.audit.find((item) => item.candidate_id === candidate.candidate_id);
+      const status = verdict?.verdict === "rejected" ? t("rejected") : verdict ? t("auditPassed") : t("pendingAudit");
+      return `${candidate.candidate_id} ${candidate.name}: ${status}`;
+    }).join("; ")
+    : t("noCandidates");
+  const profile = agentProfiles[state.selectedAgent] || agentProfiles.team_leader;
+  if (lower.includes("mcp") || lower.includes("rag") || lower.includes("观测") || lower.includes("trace") || lower.includes("metrics") || lower.includes("evidence") || lower.includes("报告") || lower.includes("变化")) {
+    return zh
+      ? `变化报告：MCP 模拟调用读取 EMS 快照、PCS 状态、MES 生产约束和审批证据；RAG 检索相似历史任务、峰段电价策略模板和安全闸门规则；可观测性记录 trace、metrics、context hash 与 evidence SHA。结论是原调度任务不再成立，需要先校验上下文，再生成受限候选方案，独立审核后请求人工审批。当前任务：${task}。`
+      : `Change report: simulated MCP calls read EMS snapshots, PCS state, MES constraints, and approval evidence; RAG retrieves similar historical tasks, peak-tariff strategy templates, and safety gate rules; observability records trace, metrics, context hash, and evidence SHA. The original dispatch task no longer holds, so context must be validated before bounded plans, independent audit, and human approval. Current task: ${task}.`;
+  }
+  if (state.selectedAgent === "perception_agent") {
+    return zh
+      ? `感知 Worker：我在规划前校验上下文。当前上下文哈希为 ${state.context?.context_hash?.slice(0, 20) || "待生成"}。我检查负荷、光伏、SOC、电价、设备状态、生产约束和传感器冲突。`
+      : `Perception Worker view: I validate context before planning. Current context hash is ${state.context?.context_hash?.slice(0, 20) || "pending"}. I check load, PV, SOC, tariff, device state, production constraints, and sensor conflicts.`;
+  }
+  if (state.selectedAgent === "dispatch_agent") {
+    return zh
+      ? `调度 Worker：只有上下文可信后，我才生成受限候选方案。当前候选：${candidateSummary}。我不能审批，也不能执行设备命令。`
+      : `Dispatch Worker view: I can generate bounded candidate plans after context is trusted. Current candidates: ${candidateSummary}. I cannot approve or execute equipment commands.`;
+  }
+  if (state.selectedAgent === "audit_agent") {
+    return zh
+      ? "审核 Worker：我独立复算 SOC、PCS 功率、变压器负载、购电功率、生产最小负荷和相对基线收益。任何不安全或无法验证的候选方案都会默认关闭。"
+      : "Audit Worker view: I independently recompute SOC, PCS power, transformer loading, grid import, production minimums, and improvement over baseline. Unsafe or unverifiable candidates fail closed.";
+  }
+  if (state.selectedAgent === "execution_agent") {
+    return zh
+      ? "执行 Worker：我只把已审核、已审批的方案映射为幂等的模拟 EMS / PCS / 负荷控制命令。如果实际与计划偏差超过阈值，我会触发安全回退。"
+      : "Execution Worker view: I only map audited and approved plans to idempotent simulated EMS / PCS / load-control commands. If actual-vs-plan deviation exceeds threshold, I trigger safe fallback.";
+  }
+  if (lower.includes("agent") || lower.includes("worker") || lower.includes("职责") || lower.includes("通讯")) {
+    return zh
+      ? "PowerPilot Runtime 会把任务分配给自治 Agent：感知产出状态对象，规划产出候选方案，审核产出安全裁决，执行产出动作对象。高风险动作必须经过人工操作员审批。"
+      : "PowerPilot Runtime assigns work to autonomous Agents: Perception produces state objects, Planning produces candidate plans, Audit produces safety verdicts, and Execution produces action objects. Human Operator approval is required for high-risk actions.";
+  }
+  if (lower.includes("candidate") || lower.includes("方案") || lower.includes("audit") || lower.includes("审核")) {
+    return zh
+      ? `当前候选状态：${candidateSummary}。审核 Worker 默认关闭风险：变压器、SOC、购电、生产最小负荷和相对基线收益都必须通过，才允许进入执行。`
+      : `Current candidate state: ${candidateSummary}. Audit Worker fails closed: transformer, SOC, grid import, production minimum, and improvement over baseline must all pass before execution.`;
+  }
+  if (lower.includes("rollback") || lower.includes("回滚") || lower.includes("安全")) {
+    return zh
+      ? "回滚边界：传感器冲突无法消解、审批被拒绝，或执行偏差超过阈值时，系统停止策略，退回安全的零充放/零削减行为，并把控制权交还人工操作员。"
+      : "Rollback boundary: if sensor conflict cannot be resolved, approval is rejected, or execution deviation exceeds the threshold, the system stops the strategy, falls back to safe zero-charge/zero-curtailment behavior, and returns control to the Human Operator.";
+  }
+  if (lower.includes("task") || lower.includes("任务") || lower.includes("context") || lower.includes("上下文")) {
+    return zh
+      ? `当前任务：${task}。上下文哈希：${state.context?.context_hash?.slice(0, 20) || "待生成"}。在感知 Worker 让运行上下文可信之前，Leader 不应让调度 Worker 开始规划。`
+      : `Current task: ${task}. Context hash: ${state.context?.context_hash?.slice(0, 20) || "pending"}. The Leader should not let Dispatch work until Perception has made the operating context trustworthy.`;
+  }
+  return zh
+    ? `我正在以 ${agentName(state.selectedAgent)} 的视角跟踪调度闭环。当前任务是 ${task}。你可以继续问 Agent 职责、候选方案、审核原因、MCP/RAG/可观测性或回滚边界。`
+    : `I am tracking the dispatch loop as ${profile.name}. Current task is ${task}. Ask about Agent responsibilities, candidates, audit reasons, MCP/RAG/observability, or rollback if you want a narrower answer.`;
+}
+
+async function sendChatMessage(event) {
+  event.preventDefault();
+  const input = $("#ai-chat-input");
+  const sendButton = $("#ai-chat-form button");
+  const runtimeStatus = $("#runtime-status");
+  const message = input.value.trim();
+  if (!message) return;
+  const agentId = state.selectedAgent || "team_leader";
+  if (!hasReadyAgentGateway(agentId)) {
+    toast(state.language === "zh" ? "请先接入并测试模型网关，成功后才能对话" : "Connect and test the model gateway before chatting");
+    openGateway(agentId);
+    return;
+  }
+  input.value = "";
+  state.activeHistory = "new";
+  state.activeScenario = null;
+  renderSelectedAgent();
+  const history = agentHistoryForRequest(agentId);
+  addChatMessage("user", message, agentId);
+  input.disabled = true;
+  sendButton.disabled = true;
+  const routedMessage = messageWithCampusContext(message);
+  try {
+    runtimeStatus.hidden = false;
+    runtimeStatus.querySelector("span").textContent = state.language === "zh" ? `${agentName(agentId)} 正在响应` : `${agentName(agentId)} is responding`;
+    let reply = null;
+    const wantsWorkerFlow = isFlowTuningRequest(message);
+    if (agentId === "team_leader") {
+      const visibleReplies = [];
+      const seenAgentSteps = new Set();
+      const shownAgentSteps = new Set();
+      await chatWithRuntimeStream(routedMessage, {
+        onRuntimeCheck: (event) => {
+          const ready = event.status?.ready;
+          if (!ready) appendRuntimeStatusMessage("team_leader", state.language === "zh" ? "AgentTeams 暂不可用。" : "AgentTeams is not ready.");
+        },
+        onWorldState: (event) => console.log("[AgentTeams world_state]", event),
+        onStage: (event) => console.log("[AgentTeams stage]", event.agent_id || "team_leader", event.message || event.stage),
+        onWorkerJoined: (event) => console.log("[AgentTeams worker]", event.agent_id || "team_leader", event.message || "joined"),
+        onStep: (event) => {
+          const step = event.step || {};
+          const text = step.response || "";
+          const stepAgent = step.agent_id || "team_leader";
+          const model = step.model || "AgentTeams";
+          const displayText = isDisplayableAgentTeamsReply(text)
+            ? text
+            : (!shownAgentSteps.has(stepAgent) && stepAgent !== "agentteams_manager" ? compactAgentTeamsWorkNote(stepAgent) : "");
+          if (displayText) {
+            shownAgentSteps.add(stepAgent);
+            addChatMessage("agent", displayText, stepAgent, { meta: { model } });
+          }
+          if (isDisplayableAgentTeamsReply(text)) {
+            visibleReplies.push({ text, agent: stepAgent, model });
+          } else if (!seenAgentSteps.has(stepAgent) && stepAgent !== "agentteams_manager") {
+            seenAgentSteps.add(stepAgent);
+            visibleReplies.push({ text: compactAgentTeamsWorkNote(stepAgent), agent: stepAgent, model });
+          }
+        },
+      });
+      const byAgent = new Map();
+      visibleReplies.forEach((item) => byAgent.set(item.agent, item));
+      const finalReplies = Array.from(byAgent.values()).slice(-6);
+      if (finalReplies.length) {
+        reply = { response: finalReplies[finalReplies.length - 1].text };
+      } else {
+        addChatMessage("agent", state.language === "zh" ? "AgentTeams 已接收请求，正在等待可展示的业务结果。" : "AgentTeams accepted the request and is waiting for a displayable result.", agentId);
+      }
+    } else {
+      reply = await chatWithSelectedAgent(agentId, routedMessage, history);
+      addChatMessage("agent", reply.response, agentId, {
+        meta: { model: reply.model },
+      });
+    }
+    if (agentId === "team_leader" && wantsWorkerFlow && state.energySnapshot) {
+      const flowPreview = previewFlowFromLatestSnapshot();
+      if (flowPreview) {
+        const plan = planNarrativeFromFlow(`${message}\n${reply?.response || ""}`, flowPreview.currentFlow, flowPreview.previewFlow, "llm");
+        showCampusPlanPreview(flowPreview.currentFlow, flowPreview.previewFlow, plan);
+      }
+    }
+  } catch (error) {
+    const missingGateway = isGatewayMissingError(error);
+    addChatMessage("agent", agentId === "team_leader" && /AgentTeams|agt|Docker|Team Room|Matrix|runtime/i.test(error?.message || "")
+      ? agentTeamsRuntimeProblemMessage(error)
+      : gatewayFailureMessage(agentId, error), agentId);
+    toast(missingGateway
+      ? (state.language === "zh" ? "请先配置真实模型网关" : "Configure the real model gateway first")
+      : (state.language === "zh" ? "真实 AgentTeams 未就绪" : "Live AgentTeams is not ready"));
+    if (missingGateway) window.setTimeout(() => openGateway(agentId), 180);
+  } finally {
+    runtimeStatus.hidden = true;
+    updateChatGatewayGate();
+    if (!input.disabled) input.focus();
+  }
+}
+
+function renderSelectedAgent() {
+  $("#active-agent-role").textContent = agentName(state.selectedAgent);
+  $("#active-agent-name").textContent = agentRole(state.selectedAgent);
+  $$("#agent-directory-list article").forEach((row) => {
+    row.classList.toggle("active", row.dataset.agentId === state.selectedAgent);
+  });
+  updateChatGatewayGate();
+}
+
+function selectAgent(agentId) {
+  $("#assistant-drawer").hidden = false;
+  state.selectedAgent = agentId;
+  state.activeHistory = "new";
+  renderSelectedAgent();
+  renderAgentThread(agentId);
+  setAgentDirectory(false);
+  setActiveRail("nav-chat");
+  $("#ai-chat-input").focus();
+}
+
+function openGateway(agentId = state.selectedAgent) {
+  state.selectedAgent = agentId;
+  state.activeHistory = "new";
+  renderSelectedAgent();
+  renderAgentThread(agentId);
+  const profile = agentProfiles[agentId] || agentProfiles.team_leader;
+  const saved = state.gateways[agentId] || {};
+  $("#gateway-title").textContent = `${agentName(agentId)} ${state.language === "zh" ? "模型网关" : "gateway"}`;
+  $("#gateway-base-url").value = saved.baseUrl || "https://api.deepseek.com";
+  $("#gateway-api-key").value = saved.apiKey || "";
+  $("#gateway-model").value = saved.model || profile.defaultModel;
+  $("#gateway-status").textContent = saved.model
+    ? (state.language === "zh" ? `已载入网关。连接状态：${saved.connectionStatus || "未测试"}。` : `Gateway loaded. Status: ${saved.connectionStatus || "untested"}.`)
+    : t("gatewayStored");
+  $("#gateway-dialog").showModal();
+}
+
+async function saveGatewayConfigFromForm() {
+  const profile = agentProfiles[state.selectedAgent] || agentProfiles.team_leader;
+  const apiKey = $("#gateway-api-key").value.trim();
+  const payload = {
+    base_url: $("#gateway-base-url").value.trim(),
+    api_key: apiKey && !apiKey.includes("•") ? apiKey : null,
+    model: $("#gateway-model").value.trim() || profile.defaultModel,
+  };
+  const { ok, body } = await requestAllowingError(`/api/agents/${state.selectedAgent}/model`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  if (!ok) {
+    throw new Error(body.detail || "Gateway save failed.");
+  }
+  updateModelStatusFromPublic(body);
+  $("#gateway-base-url").value = body.base_url || payload.base_url;
+  $("#gateway-api-key").value = body.api_key_masked || "";
+  $("#gateway-model").value = body.model || payload.model;
+  return body;
+}
+
+async function testGatewayConnection() {
+  $("#gateway-status").textContent = state.language === "zh"
+    ? "正在保存并测试模型连接..."
+    : "Saving and testing model connection...";
+  try {
+    await saveGatewayConfigFromForm();
+  } catch (error) {
+    $("#gateway-status").textContent = state.language === "zh"
+      ? `保存失败：${error.message}`
+      : `Save failed: ${error.message}`;
+    return;
+  }
+  const { ok, body } = await requestAllowingError(`/api/agents/${state.selectedAgent}/model/test`, {
+    method: "POST",
+  });
+  if (!ok || !body.success) {
+    const error = body.error || body.detail || "Model test failed.";
+    $("#gateway-status").textContent = state.language === "zh" ? `连接失败：${error}` : `Connection failed: ${error}`;
+    state.gateways[state.selectedAgent] = {
+      ...(state.gateways[state.selectedAgent] || {}),
+      connectionStatus: "失败",
+      lastError: error,
+    };
+    updateChatGatewayGate();
+    return;
+  }
+  state.gateways[state.selectedAgent] = {
+    ...(state.gateways[state.selectedAgent] || {}),
+    model: body.model,
+    connectionStatus: "正常",
+    lastError: null,
+  };
+  updateChatGatewayGate();
+  $("#gateway-status").textContent = state.language === "zh"
+    ? `模型接入成功：${body.model}。现在可在聊天中直接使用该模型。`
+    : `Model connected: ${body.model}. You can now chat with this model.`;
+}
+
+async function saveGateway(event) {
+  event.preventDefault();
+  const profile = agentProfiles[state.selectedAgent] || agentProfiles.team_leader;
+  $("#gateway-status").textContent = state.language === "zh" ? "正在保存模型网关..." : "Saving model gateway...";
+  let body;
+  try {
+    body = await saveGatewayConfigFromForm();
+  } catch (error) {
+    $("#gateway-status").textContent = error.message;
+    return;
+  }
+  $("#gateway-status").textContent = state.language === "zh"
+    ? `${agentName(state.selectedAgent)} 模型网关已保存，状态：${body.connection_status}。`
+    : `${profile.name} gateway saved. Status: ${body.connection_status}.`;
+  toast(state.language === "zh" ? `${agentName(state.selectedAgent)} 网关已保存` : `${profile.name} gateway saved`);
+}
+
+async function loadGateways() {
+  try {
+    const manifest = await request("/api/agentteams/manifest");
+    Object.values(manifest.model_configs || {}).forEach(updateModelStatusFromPublic);
+  } catch {
+    state.gateways = state.gateways || {};
+  }
+}
+
+function resizeCanvas(canvas) {
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.max(1, Math.round(rect.width * ratio));
+  canvas.height = Math.max(1, Math.round(rect.height * ratio));
+  const context = canvas.getContext("2d");
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  return { context, width: rect.width, height: rect.height };
+}
+
+function seededSeries(count, base, amplitude, phase = 0) {
+  return Array.from({ length: count }, (_, index) => {
+    const day = Math.sin((index / count) * Math.PI * 2 - Math.PI / 2);
+    const ripple = Math.sin(index * 0.73 + phase) * amplitude * 0.18;
+    return Math.max(0, base + amplitude * day + ripple);
+  });
+}
+
+function drawScenarioChart() {
+  // Removed: replaced with energy-balance panel
+}
+
+
+function formatSnapshotTime(timestamp) {
+  if (!timestamp) return "未接入真实数据";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "未接入真实数据";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+function snapshotAtCurrentCursor() {
+  const telemetry = state.energySnapshot?.telemetry;
+  if (!Array.isArray(telemetry) || !telemetry.length) return null;
+  let cursor;
+  if (state.parallel?.running) {
+    cursor = Math.max(0, state.parallel.cursor - 1);
+  } else if (state.replayCursor != null) {
+    cursor = state.replayCursor;
+  } else {
+    cursor = state.monitor?.cursor ?? state.energySnapshot.current_interval ?? 0;
+  }
+  return telemetry[Math.min(Math.max(Number(cursor) || 0, 0), telemetry.length - 1)] || null;
+}
+
+function gridEnergyUntil(cursor) {
+  const telemetry = state.energySnapshot?.telemetry || [];
+  const end = Math.min(Math.max(Number(cursor) || 0, 0), telemetry.length - 1);
+  return telemetry.slice(0, end + 1).reduce((total, point) => (
+    total + Number(point.grid_import_kw || 0) * 0.25
+  ), 0);
+}
+
+function gridCostUntil(cursor) {
+  const telemetry = state.energySnapshot?.telemetry || [];
+  const end = Math.min(Math.max(Number(cursor) || 0, 0), telemetry.length - 1);
+  return telemetry.slice(0, end + 1).reduce((total, point) => (
+    total + Number(point.grid_import_kw || 0) * Number(point.tariff_yuan_per_kwh || 0) * 0.25
+  ), 0);
+}
+
+function batteryPowerAt(cursor) {
+  const telemetry = state.energySnapshot?.telemetry || [];
+  const point = telemetry[cursor];
+  if (!point) return { label: "待命", kw: 0 };
+  const previous = telemetry[Math.max(0, cursor - 1)] || point;
+  const capacity = Number(state.energySnapshot?.scenario?.site?.battery_capacity_kwh || 800);
+  const deltaKwh = (Number(point.battery_soc || 0) - Number(previous.battery_soc || 0)) * capacity;
+  const kw = Math.abs(deltaKwh / 0.25);
+  if (kw < 0.01) return { label: "待命", kw: 0 };
+  return { label: deltaKwh >= 0 ? "充电" : "放电", kw };
+}
+
+function drawMiniChart(canvas) {
+  const { context, width, height } = resizeCanvas(canvas);
+  context.fillStyle = "#17383e";
+  context.fillRect(0, 0, width, height);
+  const x = width * .52, y = height * .52, radius = Math.min(width, height) * .3;
+  context.strokeStyle = "#35605e";
+  context.lineWidth = 1;
+  [radius, radius * 1.4].forEach((r) => {
+    context.beginPath(); context.arc(x, y, r, 0, Math.PI * 2); context.stroke();
+  });
+  for (let i = 0; i < 6; i++) {
+    const angle = i * Math.PI / 3;
+    const dx = x + Math.cos(angle) * radius, dy = y + Math.sin(angle) * radius;
+    context.beginPath(); context.moveTo(x, y); context.lineTo(dx, dy); context.stroke();
+    context.fillStyle = i % 2 ? "#67b0a4" : "#c1d99f";
+    context.beginPath(); context.arc(dx, dy, 4, 0, Math.PI * 2); context.fill();
+  }
+  context.fillStyle = "#c1d99f";
+  context.fillRect(x - 13, y - 13, 26, 26);
+  context.fillStyle = "#17383e";
+  context.font = "700 20px system-ui"; context.textAlign = "center";
+  context.fillText("P", x, y + 7);
+  context.fillStyle = "#8fb1ab";
+  context.font = "8px ui-monospace, monospace"; context.textAlign = "left";
+  context.fillText("POWERPILOT / SIMULATION", 14, height - 15);
+}
+
+function drawHomeCharts() {
+  $$(".mini-chart").forEach((canvas) => drawMiniChart(canvas, canvas.dataset.seed || 0));
+}
+
+function renderPowerChart() {
+  if (typeof window.renderPowerChart === "function") {
+    window.renderPowerChart();
+    return;
+  }
+  if (state.parallel?.interval_history?.length) {
+    drawPowerChart(state.parallel);
+    return;
+  }
+  const telemetry = state.energySnapshot?.telemetry || [];
+  const cursor = Number(state.replayCursor) || 0;
+  if (telemetry.length) {
+    drawPowerChart({
+      cursor,
+      interval_history: telemetry.slice(0, Math.min(cursor + 1, telemetry.length)).map((point, index) => ({
+        interval: index,
+        actual_load_kw: point.load_kw,
+        actual_pv_kw: point.pv_kw,
+        actual_grid_kw: point.grid_import_kw,
+        optimized_grid_kw: point.grid_import_kw,
+      })),
+    });
+    return;
+  }
+  const canvas = $("#power-chart");
+  if (!canvas) return;
+  const { context, width, height } = resizeCanvas(canvas);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  context.fillStyle = "#6b7280";
+  context.font = "12px Inter, sans-serif";
+  context.textAlign = "center";
+  context.fillText("等待园区数据接入", width / 2, height / 2);
+}
+
+function renderCsvCostComparison() {
+  if (renderTaskCostComparison()) return;
+  if (state.parallel?.interval_history?.length) {
+    drawCostChart(state.parallel);
+    return;
+  }
+  const telemetry = state.energySnapshot?.telemetry || [];
+  const cursor = Math.min(Number(state.replayCursor) || 0, Math.max(0, telemetry.length - 1));
+  if (!telemetry.length) {
+    ["cost-baseline", "cost-optimized", "cost-savings"].forEach((id) => { const el = $(`#${id}`); if (el) el.textContent = "¥0.00"; });
+    $("#savings-percent").textContent = "节省 0%";
+    $("#parallel-status").textContent = "等待园区数据";
+    const canvas = $("#cost-chart");
+    if (canvas) {
+      const { context, width, height } = resizeCanvas(canvas);
+      context.fillStyle = "#ffffff"; context.fillRect(0, 0, width, height);
+      context.fillStyle = "#6b7280"; context.font = "12px Inter, sans-serif"; context.textAlign = "center";
+      context.fillText("载入 CSV 后查看费用轨迹，生成方案后进行比较", width / 2, height / 2);
+    }
+    return;
+  }
+  let baseline = 0;
+  let optimized = 0;
+  const history = telemetry.slice(0, cursor + 1).map((point, index) => {
+    const tariff = Number(point.tariff_yuan_per_kwh ?? point.price_yuan_per_kwh ?? point.tariff ?? 0.85);
+    const gridKw = Math.max(0, Number(point.grid_import_kw ?? Math.max(0, Number(point.load_kw || 0) - Number(point.pv_kw || 0))));
+    const pvSurplus = Math.max(0, Number(point.pv_kw || 0) - Number(point.load_kw || 0));
+    const soc = Number(point.battery_soc ?? 0.5);
+    const dischargeKw = tariff > 1.0 && soc > 0.25 ? Math.min(gridKw, 0.18 * Math.max(Number(point.load_kw || 0), 1)) : 0;
+    const chargeSavingKw = tariff < 0.65 ? 0 : Math.min(pvSurplus, gridKw * 0.25);
+    const optGridKw = Math.max(0, gridKw - dischargeKw - chargeSavingKw);
+    baseline += gridKw * 0.25 * tariff;
+    optimized += optGridKw * 0.25 * tariff;
+    return {
+      interval: index,
+      baseline_cumulative_cost_yuan: baseline,
+      optimized_cumulative_cost_yuan: optimized,
+      actual_load_kw: Number(point.load_kw || 0),
+      actual_pv_kw: Number(point.pv_kw || 0),
+      actual_grid_kw: gridKw,
+      optimized_grid_kw: optGridKw,
+    };
+  });
+  const savings = baseline - optimized;
+  const p = { cursor, interval_history: history, baseline_cost_yuan: baseline, optimized_cost_yuan: optimized, savings_yuan: savings, savings_percent: baseline > 0 ? savings / baseline * 100 : 0, reoptimization_events: [] };
+  $("#cost-baseline").textContent = `¥${baseline.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+  $("#cost-optimized").textContent = `¥${optimized.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+  $("#cost-savings").textContent = `¥${savings.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+  $("#savings-percent").textContent = `节省 ${p.savings_percent.toFixed(2)}%`;
+  $("#parallel-status").textContent = "CSV 实时基线对比";
+  drawCostChart(p);
+}
+
+function startLiveCharts() {
+  if (state.liveTimer) return;
+  state.liveTimer = window.setInterval(() => {
+    state.chartTick = (state.chartTick + 1) % 96;
+    if (!$(".home-view").hidden) drawHomeCharts();
+  }, 1200);
+}
+
+function currentReplaySpeed() {
+  const index = Math.min(Math.max(Number(state.replaySpeedIndex) || 0, 0), replaySpeedOptions.length - 1);
+  state.replaySpeedIndex = index;
+  return replaySpeedOptions[index];
+}
+
+async function updateReplayClock(patch = {}) {
+  const body = {
+    speed_multiplier: currentReplaySpeed().multiplier,
+    paused: false,
+    ...patch,
+  };
+  const clock = await request("/api/data/replay", {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+  state.replayCursor = Number(clock.current_interval) || 0;
+  if (state.energySnapshot) {
+    state.energySnapshot.current_interval = state.replayCursor;
+    state.replayTime = clock.simulated_time || clock.timestamp;
+  }
+  state.chartTick = state.replayCursor;
+  return clock;
+}
+
+async function refreshReplayClock() {
+  if (!state.energySnapshot) return;
+  try {
+    const clock = await request("/api/data/replay");
+    state.replayCursor = Number(clock.current_interval) || 0;
+    state.energySnapshot = await request("/api/data/snapshot/current");
+    state.energySnapshot.current_interval = state.replayCursor;
+    state.replayTime = clock.simulated_time || clock.timestamp;
+    state.chartTick = state.replayCursor;
+    localStorage.setItem("powerpilot.workspace.savedSnapshot", JSON.stringify(state.energySnapshot));
+    await applySnapshotToCampus();
+    renderPowerChart();
+    renderCsvCostComparison();
+    renderDailyLedger();
+    renderReplayControl();
+  } catch {
+    if (state.replayTimer) window.clearInterval(state.replayTimer);
+    state.replayTimer = null;
+  }
+}
+
+async function startCampusReplay({ reset = false } = {}) {
+  const telemetry = state.energySnapshot?.telemetry || [];
+  if (!telemetry.length) return;
+  if (state.parallelTimer) window.clearInterval(state.parallelTimer);
+  state.parallelTimer = null;
+  state.parallel = null;
+  localStorage.removeItem("powerpilot.workspace.parallelState");
+  if (reset || state.replayCursor == null) {
+    state.replayCursor = Math.min(
+      Math.max(Number(state.energySnapshot.current_interval) || 0, 0),
+      telemetry.length - 1,
+    );
+  }
+  if (state.replayTimer) window.clearInterval(state.replayTimer);
+  state.replayTimer = null;
+  try {
+    await updateReplayClock({
+      current_interval: state.replayCursor,
+      speed_multiplier: currentReplaySpeed().multiplier,
+      paused: false,
+    });
+  } catch {
+    // Keep the campus usable if the backend clock is temporarily unavailable.
+  }
+  await applySnapshotToCampus();
+  renderPowerChart();
+  renderCsvCostComparison();
+  renderDailyLedger();
+  renderReplayControl();
+  state.replayTimer = window.setInterval(refreshReplayClock, 1200);
+}
+
+async function setReplayCursor(cursor) {
+  const telemetry = state.energySnapshot?.telemetry || [];
+  if (!telemetry.length) return;
+  state.replayCursor = Math.min(Math.max(Number(cursor) || 0, 0), telemetry.length - 1);
+  state.energySnapshot.current_interval = state.replayCursor;
+  state.chartTick = state.replayCursor;
+  try {
+    await updateReplayClock({ current_interval: state.replayCursor });
+  } catch {
+    // Local preview still follows the user's scrub action.
+  }
+  localStorage.setItem("powerpilot.workspace.savedSnapshot", JSON.stringify(state.energySnapshot));
+  await applySnapshotToCampus();
+  renderPowerChart();
+  renderCsvCostComparison();
+  renderDailyLedger();
+  renderReplayControl();
+}
+
+function renderReplayControl() {
+  const slider = $("#replay-slider");
+  const speedSlider = $("#replay-speed-slider");
+  const readout = $("#replay-readout");
+  const telemetry = state.energySnapshot?.telemetry || [];
+  if (slider) {
+    slider.max = String(Math.max(0, telemetry.length - 1));
+    slider.value = String(Math.min(Number(state.replayCursor) || 0, Math.max(0, telemetry.length - 1)));
+    slider.disabled = !telemetry.length;
+  }
+  if (speedSlider) {
+    speedSlider.value = String(state.replaySpeedIndex);
+    speedSlider.disabled = !telemetry.length;
+  }
+  if (readout) {
+    const point = telemetry[Number(state.replayCursor) || 0];
+    const modeText = currentReplaySpeed().label;
+    const displayTime = state.replayTime || point?.timestamp;
+    readout.textContent = point ? `${String(Number(state.replayCursor) + 1).padStart(2, "0")}/${telemetry.length} · ${formatSnapshotTime(displayTime)} · ${modeText}` : "等待 CSV";
+  }
+}
+
+function updateAssetLabels(labels) {
+  $$(".asset").forEach((element) => {
+    element.dataset.hidden = "true";
+  });
+  Object.entries(labels).forEach(([key, position]) => {
+    let element = $(`.asset[data-anchor="${key}"]`);
+    if (!element) {
+      element = document.createElement("article");
+      element.className = "asset metric-card";
+      element.dataset.anchor = key;
+      $(".campus").append(element);
+    }
+    if (position.title) {
+      element.innerHTML = `
+        <span>${escapeHTML(position.title)}</span>
+        <em>${escapeHTML(position.device || "")}</em>
+        <strong>${escapeHTML(position.metric || "")}</strong>
+        <small>${escapeHTML(position.note || "")}</small>
+      `;
+    }
+    element.dataset.placement = position.placement || "above";
+    element.dataset.selected = position.selected ? "true" : "false";
+    element.style.setProperty("--x", `${position.x}px`);
+    element.style.setProperty("--y", `${position.y}px`);
+    element.dataset.hidden = position.visible ? "false" : "true";
+  });
+}
+
+function renderCampusSimulation() {
+  const sim = state.campusSimulation;
+  // Current status (kW)
+  $("#campus-balance").textContent = state.energySnapshot ? sim.balance : "等待 CSV";
+  $("#campus-load").textContent = sim.load;
+  $("#campus-generation").textContent = sim.generation;
+  $("#campus-storage").textContent = sim.storage;
+  $("#campus-storage-flow").textContent = sim.storageFlow;
+  $("#campus-grid-import").textContent = sim.gridImport;
+  $("#campus-current-time").textContent = state.energySnapshot ? sim.time : "等待 CSV";
+  $("#campus-time-sync").textContent = state.energySnapshot ? "CSV 时间已校对" : "未对时";
+  $("#campus-waste-kwh").textContent = sim.wastedKwh == null ? "-- kWh" : `${sim.wastedKwh.toFixed(1)} kWh`;
+  $("#campus-extra-cost").textContent = sim.extraCost == null ? "--" : `¥${sim.extraCost.toFixed(1)}`;
+  // Today cumulative (度 / kWh)
+  $("#today-load").textContent = `${sim.todayLoad.toFixed(1)} 度`;
+  $("#today-gen").textContent = `${sim.todayGen.toFixed(1)} 度`;
+  $("#today-grid").textContent = `${sim.todayGrid.toFixed(1)} 度`;
+  $("#today-charge").textContent = `${sim.todayCharge.toFixed(1)} 度`;
+  $("#today-discharge").textContent = `${sim.todayDischarge.toFixed(1)} 度`;
+  $("#today-cost").textContent = `¥${sim.todayCost.toFixed(2)}`;
+  // Energy balance
+  $("#balance-total-load").textContent = sim.totalLoad.toFixed(1);
+  $("#balance-from-gen").textContent = `${sim.fromGen.toFixed(1)} 度`;
+  $("#balance-from-storage").textContent = `${sim.fromStorage.toFixed(1)} 度`;
+  $("#balance-from-grid").textContent = `${sim.fromGrid.toFixed(1)} 度`;
+  $("#balance-to-load").textContent = `${sim.toLoad.toFixed(1)} 度`;
+  $("#balance-to-storage").textContent = `${sim.toStorageCharge.toFixed(1)} 度`;
+  $("#balance-to-grid").textContent = `${sim.toGridExport.toFixed(1)} 度`;
+  const exportLabel = $("#balance-export-label");
+  if (exportLabel) exportLabel.style.display = sim.toGridExport > 0.01 ? "inline" : "none";
+}
+
+function roundPower(value) {
+  return Math.max(0, Number(value) || 0);
+}
+
+function campusFlowFromPower({ loadKw = 0, pvKw = 0, gridImportKw = 0, batteryPowerKw = 0, batteryMode = "idle", exportKw = 0 }) {
+  const load = roundPower(loadKw);
+  const pv = roundPower(pvKw);
+  const grid = roundPower(gridImportKw);
+  const battery = roundPower(batteryPowerKw);
+  const charging = batteryMode === "charge";
+  const discharging = batteryMode === "discharge";
+  const solarStorage = charging ? Math.min(battery, pv) : 0;
+  const storageLoad = discharging ? Math.min(battery, load) : 0;
+  const gridLoad = Math.min(grid, Math.max(0, load - storageLoad));
+  const solarLoad = Math.max(0, Math.min(pv - solarStorage, load - storageLoad - gridLoad));
+  const solarGrid = Math.max(0, exportKw);
+  const curtail = Math.max(0, pv - solarLoad - solarStorage - solarGrid);
+  return {
+    solar_load: solarLoad,
+    solar_storage: solarStorage,
+    storage_load: storageLoad,
+    grid_load: gridLoad,
+    solar_grid: solarGrid,
+    curtail,
+  };
+}
+
+function previewFlowFromCurrent({ loadKw, pvKw, gridImportKw, batteryPowerKw, batteryMode }) {
+  const avoidCurtail = Math.min(Math.max(0, pvKw - loadKw * .55), Math.max(2, pvKw * .32));
+  const targetStorage = Math.max(batteryMode === "discharge" ? batteryPowerKw : 0, Math.min(loadKw * .42, gridImportKw + avoidCurtail));
+  const targetGrid = Math.max(0, gridImportKw - targetStorage * .78);
+  const targetCurtail = Math.max(0, Math.min(0.8, pvKw - loadKw - avoidCurtail));
+  return campusFlowFromPower({
+    loadKw,
+    pvKw,
+    gridImportKw: targetGrid,
+    batteryPowerKw: targetStorage,
+    batteryMode: "discharge",
+    exportKw: 0,
+  });
+}
+
+function formatDelta(before, after, unit = "kW") {
+  return `${Number(before || 0).toFixed(1)} → ${Number(after || 0).toFixed(1)} ${unit}`;
+}
+
+function planNarrativeFromFlow(message = "", currentFlow = {}, previewFlow = {}, source = "local") {
+  const gridDrop = Number(currentFlow.grid_load || 0) - Number(previewFlow.grid_load || 0);
+  const storageGain = Number(previewFlow.storage_load || 0) - Number(currentFlow.storage_load || 0);
+  const chargeGain = Number(previewFlow.solar_storage || 0) - Number(currentFlow.solar_storage || 0);
+  const curtailDrop = Number(currentFlow.curtail || 0) - Number(previewFlow.curtail || 0);
+  const asksStorage = /储能|充电|放电|battery|storage/i.test(message);
+  const asksCurtail = /限发|浪费|curtail|waste/i.test(message);
+  const asksGrid = /购电|电网|grid/i.test(message);
+  let title = "动态调度预览";
+  if (asksStorage && chargeGain > storageGain) title = "发电补储预览";
+  else if (asksStorage) title = "储能接管预览";
+  else if (asksCurtail) title = "限发回收预览";
+  else if (asksGrid) title = "降购电预览";
+  const reasonBits = [];
+  if (gridDrop > .05) reasonBits.push(`把电网购电压低 ${gridDrop.toFixed(1)} kW`);
+  if (storageGain > .05) reasonBits.push(`让储能多放电 ${storageGain.toFixed(1)} kW 给用电格`);
+  if (chargeGain > .05) reasonBits.push(`把发电多送 ${chargeGain.toFixed(1)} kW 进储能格`);
+  if (curtailDrop > .05) reasonBits.push(`减少限发 ${curtailDrop.toFixed(1)} kW`);
+  if (!reasonBits.length) reasonBits.push("当前时刻约束较紧，先保持主流向，只做小幅调度预演");
+  const prefix = source === "llm" ? "LLM 根据当前沙盘和这轮对话生成：" : "真实模型未接入，未生成可采用方案：";
+  return {
+    title,
+    source,
+    reason: `${prefix}${reasonBits.join("，")}。`,
+  };
+}
+
+function renderFlowPreviewCard(currentFlow, previewFlow, plan = {}) {
+  const card = $("#flow-preview-card");
+  if (!card) return;
+  const visible = Boolean(previewFlow);
+  card.hidden = !visible;
+  if (!visible) return;
+  card.querySelector("header strong").textContent = plan.title || "动态调度预览";
+  card.querySelector("header span").textContent = plan.source === "agentteams" ? "AgentTeams Worker 真实方案" : plan.source === "llm" ? "LLM 新方案预览" : "等待真实模型方案";
+  $("#delta-grid").textContent = formatDelta(currentFlow.grid_load, previewFlow.grid_load);
+  $("#delta-storage").textContent = formatDelta(currentFlow.storage_load, previewFlow.storage_load);
+  $("#delta-curtail").textContent = formatDelta(currentFlow.curtail, previewFlow.curtail);
+  $("#flow-plan-reason").textContent = plan.reason || "根据当前沙盘状态生成新的电流预演。";
+}
+
+function showCampusPlanPreview(currentFlow, previewFlow, plan = {}) {
+  state.flowPreview = { currentFlow, previewFlow, plan };
+  renderFlowPreviewCard(currentFlow, previewFlow, plan);
+  state.campus3d?.previewEnergyState?.({ flows: previewFlow });
+}
+
+function clearCampusPlanPreview(adopt = false) {
+  if (adopt) state.campus3d?.adoptPreview?.();
+  state.flowPreview = null;
+  renderFlowPreviewCard(null, null);
+}
+
+function ledgerRecord(action, currentFlow = {}, previewFlow = {}) {
+  const plan = state.flowPreview?.plan || {};
+  const now = new Date();
+  const record = {
+    id: `PLAN-${now.getTime()}`,
+    action,
+    time: state.campusSimulation?.time || now.toLocaleString("zh-CN", { hour12: false }),
+    title: plan.title || "动态调度预览",
+    reason: plan.reason || "根据当前沙盘状态生成新的电流预演。",
+    expected: {
+      grid: formatDelta(currentFlow.grid_load, previewFlow.grid_load),
+      storage: formatDelta(currentFlow.storage_load, previewFlow.storage_load),
+      waste: formatDelta(currentFlow.curtail, previewFlow.curtail),
+    },
+  };
+  state.planLedger.unshift(record);
+  state.planLedger = state.planLedger.slice(0, 12);
+  window.localStorage.setItem("powerpilot.workspace.planLedger", JSON.stringify(state.planLedger));
+  renderPlanLedger();
+}
+
+function isFlowTuningRequest(message) {
+  return /减少|降低|优化|改善|调|方案|预览|购电|限发|浪费|储能|放电|充电|grid|curtail|waste|battery|storage|optimi[sz]e/i.test(message);
+}
+
+function isFrustratedChatRequest(message) {
+  return /正常说话|不和我对话|有毛病|好好看看|咋回事|为什么没有|能不能|一直没充|一直浪费/i.test(message);
+}
+
+function hasReadyTeamLeaderGateway() {
+  const gateway = state.gateways?.team_leader || state.gateways?.[state.selectedAgent];
+  return Boolean(gateway?.apiKey && gateway.connectionStatus === "正常");
+}
+
+function hasReadyAgentGateway(agentId = state.selectedAgent) {
+  const gateway = state.gateways?.[agentId] || (agentId !== "team_leader" ? state.gateways?.team_leader : null);
+  return Boolean(gateway?.apiKey && gateway.connectionStatus === "正常");
+}
+
+function updateChatGatewayGate() {
+  const input = $("#ai-chat-input");
+  const sendButton = $("#ai-chat-form button");
+  if (!input || !sendButton) return;
+  const ready = hasReadyAgentGateway(state.selectedAgent);
+  input.disabled = !ready;
+  sendButton.disabled = !ready;
+  input.placeholder = ready
+    ? "例如：帮我减少购电和限发，先预览新流向"
+    : "请先点齿轮接入模型网关，测试成功后才能对话";
+}
+
+function normalizeLegacyUserText(text) {
+  return String(text || "")
+    .replace(/(?:^|\s)(你\s*){1,3}Operator\s*/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function repairSavedAgentThreads(threads = {}) {
+  Object.values(threads).forEach((thread) => {
+    if (!Array.isArray(thread)) return;
+    thread.forEach((message) => {
+      if (message?.role === "user") message.text = normalizeLegacyUserText(message.text);
+    });
+  });
+  return threads;
+}
+
+function previewFlowFromLatestSnapshot() {
+  const point = snapshotAtCurrentCursor();
+  if (!point) return null;
+  const telemetry = state.energySnapshot?.telemetry || [];
+  const cursor = Math.min(Math.max(Number(point.interval) || 0, 0), telemetry.length - 1);
+  const prevPt = cursor > 0 ? telemetry[cursor - 1] : point;
+  const capacity = Number(state.energySnapshot?.scenario?.site?.battery_capacity_kwh || 800);
+  const dt = 0.25;
+  const deltaSoc = (point.battery_soc || 0) - (prevPt.battery_soc || 0);
+  const batteryPowerKw = Math.abs(deltaSoc * capacity / dt);
+  const batteryMode = deltaSoc >= 0.001 ? "charge" : deltaSoc <= -0.001 ? "discharge" : "idle";
+  const gridImportKw = Math.max(0, (point.load_kw || 0) - (point.pv_kw || 0));
+  const currentFlow = state.lastCampusFlow || campusFlowFromPower({
+    loadKw: point.load_kw || 0,
+    pvKw: point.pv_kw || 0,
+    gridImportKw,
+    batteryPowerKw,
+    batteryMode,
+    exportKw: Number(point.grid_export_kw || point.export_kw || 0),
+  });
+  const previewFlow = previewFlowFromCurrent({
+    loadKw: point.load_kw || 0,
+    pvKw: point.pv_kw || 0,
+    gridImportKw,
+    batteryPowerKw,
+    batteryMode,
+  });
+  return { currentFlow, previewFlow };
+}
+
+function handleLocalFlowTuningRequest(message) {
+  if (!isFlowTuningRequest(message) && !isFrustratedChatRequest(message)) return false;
+  if (hasReadyTeamLeaderGateway()) return false;
+  clearCampusPlanPreview(false);
+  const reply = state.energySnapshot
+    ? "我看到了右侧 CSV 园区数据，但现在没有通过测试的真实 Team Leader 模型网关，所以我不会生成本地替代方案，也不会改沙盘流向。请先接入并测试 DeepSeek/模型网关；之后调度类请求会进入真实 AgentTeams，普通聊天会由真实模型直接回答。"
+    : "右侧还没有上传 CSV，且 Team Leader 模型网关未就绪。我不会生成本地替代方案；先上传园区 CSV 并测试模型网关，之后再让真实 AgentTeams 做调度。";
+  addChatMessage("agent", reply, "team_leader");
+  return true;
+}
+
+function renderPlanLedger() {
+  const list = $("#plan-ledger-list");
+  if (!list) return;
+  if (!state.energySnapshot) {
+    state.planLedger = [];
+    window.localStorage.removeItem("powerpilot.workspace.planLedger");
+  }
+  $("#plan-ledger-count").textContent = `${state.planLedger.length} 条记录`;
+  if (!state.planLedger.length) {
+    list.innerHTML = `<p class="empty">确认或放弃方案后，可在这里查看对应理由与预计变化。</p>`;
+    return;
+  }
+  list.innerHTML = state.planLedger.map((record) => `
+    <article class="plan-ledger-item ${record.action === "adopted" ? "adopted" : "rejected"}">
+      <header>
+        <div><span>${record.action === "adopted" ? "已采用" : "已拒绝"}</span><strong>${escapeHTML(record.title)}</strong></div>
+        <time>${escapeHTML(record.time)}</time>
+      </header>
+      <p>${escapeHTML(record.reason)}</p>
+      <dl>
+        <div><dt>电网购电</dt><dd>${escapeHTML(record.expected.grid)}</dd></div>
+        <div><dt>储能放电</dt><dd>${escapeHTML(record.expected.storage)}</dd></div>
+        <div><dt>限发浪费</dt><dd>${escapeHTML(record.expected.waste)}</dd></div>
+      </dl>
+    </article>
+  `).join("");
+}
+
+async function applySnapshotToCampus() {
+  const telemetry = state.energySnapshot?.telemetry || [];
+  const point = snapshotAtCurrentCursor();
+  if (!point) {
+    renderCampusSimulation();
+    state.campus3d?.applyEnergyState?.({
+      load: "-- kW",
+      generation: "-- kW",
+      storage: "SOC --",
+      storageFlow: "等待 CSV 接入",
+      gridImport: "-- kW",
+      noData: true,
+      flows: campusFlowFromPower({}),
+      previewFlows: null,
+    });
+    return;
+  }
+
+  let world = null;
+  try {
+    world = await request("/api/world-state");
+  } catch (e) {
+    console.error("applySnapshotToCampus: failed to fetch world-state, falling back", e);
+  }
+
+  const cursor = Math.min(Math.max(Number(point.interval) || 0, 0), telemetry.length - 1);
+  const capacity = Number(state.energySnapshot?.scenario?.site?.battery_capacity_kwh || 800);
+  const dt = 0.25;
+
+  // Authority: world-state (MW -> kW)
+  const loadKw = world ? (world.current_load_mw || 0) * 1000 : (point.load_kw || 0);
+  const pvKw   = world ? (world.pv_forecast_mw || 0) * 1000 : (point.pv_kw || 0);
+  const gridImportKw = world ? (world.grid_import_mw || 0) * 1000 : Math.max(0, loadKw - pvKw);
+  const socPercent = world ? (world.storage_soc_percent || 0) : ((point.battery_soc || 0) * 100);
+
+  // Battery power from SOC delta (backend does not expose this)
+  const prevPt = cursor > 0 ? telemetry[cursor - 1] : point;
+  const deltaSoc = (point.battery_soc || 0) - (prevPt.battery_soc || 0);
+  const batteryPowerKw = Math.abs(deltaSoc * capacity / dt);
+  const batteryMode = deltaSoc >= 0.001 ? "charge" : deltaSoc <= -0.001 ? "discharge" : "idle";
+  const batteryLabel = batteryMode === "charge" ? "正在充电" : batteryMode === "discharge" ? "正在放电" : "待机";
+
+  // Authority: daily cumulative
+  const daily = world?.daily_so_far || {};
+  const totalLoadKwh = daily.load_kwh ?? 0;
+  const totalGenKwh = daily.pv_kwh ?? 0;
+  const totalGridImportKwh = daily.grid_import_kwh ?? 0;
+  const totalCost = daily.purchase_cost_yuan ?? 0;
+
+  // Decomposition from authority
+  const fromGrid = totalGridImportKwh;
+  const fromStorage = daily.storage_discharge_kwh ?? 0;
+  const fromGen = Math.max(0, totalLoadKwh - fromGrid - fromStorage);
+  const toLoad = Math.max(0, totalGenKwh);
+  const toGridExport = daily.grid_feed_kwh ?? Math.max(0, (pvKw - loadKw) * dt);
+  const toStorageCharge = daily.storage_charge_kwh ?? 0;
+  const pvCurtailmentKw = (world && typeof world.pv_curtailment_kw === 'number') ? world.pv_curtailment_kw : Math.max(0, pvKw - loadKw);
+  const wastedKwh = daily.wasted_pv_kwh ?? daily.curtailment_kwh ?? (pvCurtailmentKw * dt);
+
+  state.campusSimulation = {
+    time: formatSnapshotTime(state.replayTime || point.timestamp),
+    balance: `¥${Math.max(0, 10000 - totalCost).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    load: `${loadKw.toFixed(2)} kW`,
+    generation: `${pvKw.toFixed(2)} kW`,
+    storage: `SOC ${socPercent.toFixed(0)}%`,
+    storageFlow: `${batteryLabel}${batteryPowerKw > 0.01 ? " " + batteryPowerKw.toFixed(2) + " kW" : ""}`,
+    gridImport: `${gridImportKw.toFixed(2)} kW`,
+    socPercent,
+
+    todayLoad: totalLoadKwh,
+    todayGen: totalGenKwh,
+    todayGrid: totalGridImportKwh,
+    todayCharge: daily.storage_charge_kwh ?? 0,
+    todayDischarge: daily.storage_discharge_kwh ?? 0,
+    todayCost: totalCost,
+
+    totalLoad: totalLoadKwh,
+    fromGen,
+    fromStorage,
+    fromGrid,
+    toLoad,
+    toStorageCharge,
+    toGridExport,
+    wastedKwh,
+    extraCost: totalCost,
+  };
+  renderCampusSimulation();
+
+  const currentFlow = campusFlowFromPower({
+    loadKw,
+    pvKw,
+    gridImportKw,
+    batteryPowerKw,
+    batteryMode,
+    exportKw: Math.max(0, pvKw - loadKw - batteryPowerKw),
+  });
+  const previewFlow = previewFlowFromCurrent({
+    loadKw,
+    pvKw,
+    gridImportKw,
+    batteryPowerKw,
+    batteryMode,
+  });
+  state.lastCampusFlow = currentFlow;
+
+  state.campus3d?.applyEnergyState?.({
+    optimized: Boolean(state.task?.approval?.approved),
+    gridImport: `${gridImportKw.toFixed(2)} kW`,
+    generation: `${pvKw.toFixed(2)} kW`,
+    storage: `SOC ${socPercent.toFixed(0)}%`,
+    storageFlow: state.campusSimulation.storageFlow,
+    load: `${loadKw.toFixed(2)} kW`,
+    socPercent,
+    flows: currentFlow,
+    previewFlows: state.flowPreview ? previewFlow : null,
+  });
+  if (state.flowPreview) showCampusPlanPreview(currentFlow, previewFlow, state.flowPreview.plan);
+  else clearCampusPlanPreview(false);
+}
+
+async function applyRuntimeToCampus(runtime) {
+  const artifacts = runtime?.artifacts || [];
+  const stateArtifact = artifacts.find((artifact) => artifact.name === "state.json");
+  const planArtifact = artifacts.find((artifact) => artifact.name === "plan.json");
+  const verification = artifacts.find((artifact) => artifact.name === "verification.json");
+  const energyState = stateArtifact?.payload?.energy_state || {};
+  const recommendedPlan = verification?.payload?.recommended_plan_id || "Plan-B";
+  const currentLoad = Number(energyState.current_load_mw || 25);
+  const pvForecast = Number(energyState.pv_forecast_mw || 10);
+  const soc = Number(energyState.storage_soc_percent || 61);
+  if (!planArtifact && !verification) return;
+  state.campusSimulation = {
+    optimized: true,
+    time: "2026-09-11 14:00",
+    balance: "¥7,000.00",
+    load: `${currentLoad.toFixed(1)} MW`,
+    generation: `${Math.max(10, pvForecast + 20).toFixed(0)} MW`,
+    storage: `SOC ${Math.min(88, soc + 18).toFixed(0)}%`,
+    storageFlow: `${recommendedPlan} 调峰中`,
+    gridImport: "8.00 MW",
+    todayLoad: 0, todayGen: 0, todayGrid: 0, todayCharge: 0, todayDischarge: 0, todayCost: 0,
+    totalLoad: 0, fromGen: 0, fromStorage: 0, fromGrid: 0, toLoad: 0, toStorageCharge: 0, toGridExport: 0,
+  };
+  renderCampusSimulation();
+  state.campus3d?.applyEnergyState?.({
+    optimized: true,
+    storage: state.campusSimulation.storage,
+    load: state.campusSimulation.load,
+    recommendedPlan,
+  });
+}
+
+function statusClass(value) {
+  if (value === "COMPLETED" || value === "approved") return "ok";
+  if (value === "ROLLBACK" || value === "FAILED" || value === "rejected") return "danger";
+  if (value === "AWAITING_APPROVAL" || value === "audit_approved") return "warn";
+  return "info";
+}
+
+function renderTask() {
+  const task = state.task;
+  const context = state.context;
+  $(".control-bar").classList.toggle("has-monitor", Boolean(state.monitor?.running || state.monitor?.task_id || state.parallel));
+  $("#task-id").textContent = task?.task_id || t("noTask");
+  $("#task-version").textContent = task ? `V${task.task_version}` : "--";
+  $("#task-state").textContent = task ? stateLabels[state.language][task.state] || task.state : stateLabels[state.language].IDLE;
+  $("#task-state").className = statusClass(task?.state);
+  $("#context-hash").textContent = context?.context_hash ? `${context.context_hash.slice(0, 20)}...` : t("contextPending");
+  $("#approval-status").textContent = state.approval ? t("approved") : task?.state === "AWAITING_APPROVAL" ? t("needsHuman") : t("waiting");
+  $("#evidence-status").textContent = task?.evidence_sha256 ? t("sealed") : state.evidence ? t("ready") : t("notSealed");
+  $("#open-evidence").disabled = !state.task;
+  $("#review-candidates").disabled = !state.candidates.length;
+  if ($("#approve-b")) $("#approve-b").disabled = Boolean(state.approval) || task?.state !== "AWAITING_APPROVAL";
+  if ($("#execute-b")) $("#execute-b").disabled = !state.approval || task?.state !== "AWAITING_APPROVAL";
+}
+
+function renderCandidates() {
+  if (!state.energySnapshot && !state.task) {
+    $("#candidate-list").innerHTML = `<p class="empty">载入数据后生成方案，或使用上方的调度演练查看完整复核流程。</p>`;
+    $("#review-candidates").disabled = true;
+    return;
+  }
+  if (state.activeScenario) {
+    const artifacts = scenarioAgentArtifacts(state.activeScenario);
+    $("#candidate-list").innerHTML = `
+      <article class="strategy-code">
+        <span>策略代码预览</span>
+        <pre>${escapeHTML(scenarioStrategyCode(state.activeScenario))}</pre>
+      </article>
+      <article class="audit-report">
+        <span>审核报告</span>
+        <p>${escapeHTML(scenarioAuditReport(state.activeScenario))}</p>
+      </article>
+      <div class="agent-artifacts">
+        ${artifacts.map(([artifact, detail]) => `
+          <button class="candidate approved structured-artifact" type="button">
+            <div>
+              <span>${escapeHTML(artifact)}</span>
+              <strong>${state.language === "zh" ? "对象已生成" : "Object ready"}</strong>
+            </div>
+            <pre>${escapeHTML(JSON.stringify(detail, null, 2))}</pre>
+          </button>
+        `).join("")}
+      </div>
+    `;
+    $$(".candidate").forEach((candidate, index) => {
+      candidate.addEventListener("click", () => openTraceDetail(Math.min(index + 1, state.events.length - 1)));
+    });
+    return;
+  }
+  if (!state.candidates.length) {
+    $("#candidate-list").innerHTML = `<p class="empty">${escapeHTML(t("candidateEmpty"))}</p>`;
+    return;
+  }
+  $("#candidate-list").innerHTML = state.candidates.map((candidate) => {
+    const verdict = state.audit.find((item) => item.candidate_id === candidate.candidate_id);
+    const rejected = verdict?.verdict === "rejected";
+    const status = verdict ? (rejected ? t("rejected") : t("auditPassed")) : t("pendingAudit");
+    return `
+      <button class="candidate ${rejected ? "rejected" : "approved"}" type="button" data-candidate-id="${escapeHTML(candidate.candidate_id)}">
+        <div>
+          <span>${escapeHTML(candidate.candidate_id)} · ${escapeHTML(candidate.name)}</span>
+          <strong>${escapeHTML(status)}</strong>
+        </div>
+        <dl>
+          <div><dt>${state.language === "zh" ? "成本" : "Cost"}</dt><dd>¥${Math.round(candidate.cost_yuan).toLocaleString()}</dd></div>
+          <div><dt>${state.language === "zh" ? "峰值" : "Peak"}</dt><dd>${Math.round(candidate.max_power_kw)} kW</dd></div>
+          <div><dt>SOC</dt><dd>${candidate.soc_min_percent}% - ${candidate.soc_max_percent}%</dd></div>
+          <div><dt>${state.language === "zh" ? "变压器" : "Transformer"}</dt><dd>${candidate.transformer_load_percent}%</dd></div>
+        </dl>
+        <p>${verdict ? escapeHTML(verdict.reason) : escapeHTML(state.language === "zh" ? "等待审核结论。" : "Waiting for audit verdict.")}</p>
+      </button>
+    `;
+  }).join("");
+  $$(".candidate").forEach((candidate) => {
+    candidate.addEventListener("click", () => openCandidateDetail(candidate.dataset.candidateId));
+  });
+}
+
+function traceText(event) {
+  const time = new Date(event.timestamp).toLocaleTimeString("zh-CN", { hour12: false });
+  return `${time} · ${actorLabels[state.language][event.actor] || event.actor}`;
+}
+
+function renderTrace() {
+  $("#trace-count").textContent = state.language === "zh" ? `${state.events.length} ${t("events")}` : `${state.events.length} ${t("events")}`;
+  if (!state.energySnapshot && !state.task) {
+    $("#trace-count").textContent = "0 个事件";
+    $("#trace-list").innerHTML = `<p class="empty">方案生成后，数据检查、审计和模拟执行的记录会依次出现。</p>`;
+    $("#open-evidence").disabled = true;
+    return;
+  }
+  if (state.activeScenario) {
+    $("#trace-list").innerHTML = state.activeScenario.steps.map(([label, detail], index) => `
+      <button class="trace-item" type="button" data-index="${index}">
+        <i class="${index === state.activeScenario.steps.length - 1 ? "ok" : "info"}"></i>
+        <span>Step ${String(index + 1).padStart(2, "0")} · ${escapeHTML(label)}</span>
+        <small>${escapeHTML(detail)}</small>
+      </button>
+    `).join("");
+    $$(".trace-item").forEach((item) => {
+      item.addEventListener("click", () => openTraceDetail(Number(item.dataset.index)));
+    });
+    return;
+  }
+  if (!state.events.length) {
+    $("#trace-list").innerHTML = `<p class="empty">${escapeHTML(t("traceEmpty"))}</p>`;
+    return;
+  }
+  $("#trace-list").innerHTML = state.events.map((event, index) => `
+    <button class="trace-item" type="button" data-index="${index}">
+      <i class="${statusClass(event.to_state)}"></i>
+      <span>${escapeHTML(traceText(event))}</span>
+      <small>${escapeHTML(event.reason)} · ${escapeHTML(event.to_state)}</small>
+    </button>
+  `).join("");
+  $$(".trace-item").forEach((item) => {
+    item.addEventListener("click", () => openTraceDetail(Number(item.dataset.index)));
+  });
+}
+
+async function loadOpsEvidence() {
+  try {
+    state.opsEvidence = await request("/api/ops/evidence-board");
+    renderOpsReport();
+  } catch (error) {
+    state.opsEvidence = null;
+    renderOpsReport();
+  }
+}
+
+function evidenceStatus(value, fallback = "--") {
+  if (value === true) return "Ready";
+  if (value === false) return "Waiting";
+  if (value == null || value === "") return fallback;
+  return String(value);
+}
+
+function renderOpsReport() {
+  const evidence = state.opsEvidence;
+  const parallel = state.parallel;
+  const uploaded = Boolean(evidence?.data_snapshot?.loaded || state.energySnapshot);
+  $("#ops-data-state").textContent = uploaded ? "Loaded" : "Waiting";
+  $("#ops-plan-state").textContent = evidence?.closed_loop?.old_plan_status || (parallel ? "tracking" : "--");
+  $("#ops-trace-count").textContent = String(evidence?.agentteams?.trace_count || parallel?.agentteams_trace?.length || state.events?.length || 0);
+
+  const comparison = evidence?.comparison || {};
+  const loopItems = [
+    ["业务输入", evidence?.closed_loop?.business_input || "载入本地样本或上传 OpenCEM 格式 CSV。"],
+    ["上下文快照", uploaded ? `${evidence?.data_snapshot?.telemetry_points || state.energySnapshot?.telemetry?.length || 0} 个 15 分钟点已归一化` : "等待园区数据接入"],
+    ["动态重规划", `${evidence?.closed_loop?.replan_count ?? parallel?.total_reoptimizations ?? 0} 次；旧计划 ${evidence?.closed_loop?.old_plan_status || "等待偏差判定"}`],
+    ["人工门禁", evidence?.closed_loop?.hitl_gate || "高风险写入和柔性负荷动作必须审批"],
+    ["执行回读", `${Math.round((evidence?.closed_loop?.execution_readback_rate || 0) * 100)}% readback；失效计划误执行 ${comparison.invalid_plan_executions ?? 0}`],
+    ["完成条件", evidence?.closed_loop?.completion_condition || "跑完 96 点、封存证据、无约束违规"],
+  ];
+  $("#ops-loop-list").innerHTML = loopItems.map(([label, value], index) => `
+    <li>
+      <i>${index + 1}</i>
+      <div><strong>${escapeHTML(label)}</strong><span>${escapeHTML(value)}</span></div>
+    </li>
+  `).join("");
+
+  const workers = evidence?.agentteams?.workers || [];
+  $("#ops-agent-list").innerHTML = workers.map((worker) => `
+    <article>
+      <strong>${escapeHTML(worker.display_name)}</strong>
+      <span>${escapeHTML(worker.role)}</span>
+      <small>${escapeHTML((worker.skills || []).join(" · "))}</small>
+    </article>
+  `).join("") || "<p class=\"empty\">AgentTeams manifest 未加载。</p>";
+
+  $("#ops-permission-list").innerHTML = workers.map((worker) => `
+    <article>
+      <div><strong>${escapeHTML(worker.display_name)}</strong><span>${escapeHTML((worker.mcp_servers || []).join(", "))}</span></div>
+      <ul>${(worker.permissions || []).map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>
+    </article>
+  `).join("") || "<p class=\"empty\">等待权限清单。</p>";
+
+  $("#ops-rag-insight").textContent = evidence?.rag_memory?.latest_insight || "等待偏差记录。";
+  $("#ops-memory-deviation").textContent = String(evidence?.rag_memory?.writes?.deviation_events || 0);
+  $("#ops-memory-human").textContent = String(evidence?.rag_memory?.writes?.human_adjustments || 0);
+  $("#ops-memory-outcome").textContent = String(evidence?.rag_memory?.writes?.final_outcomes || 0);
+
+  const slo = evidence?.slo || {};
+  const sloItems = [
+    ["刷新", evidenceStatus(slo.plan_refresh_p95_ms, "待采样")],
+    ["告警", evidenceStatus(slo.alert_state || slo.status, "未触发")],
+    ["节省", `¥${Number(comparison.savings_yuan || parallel?.savings_yuan || 0).toFixed(2)}`],
+    ["违规", `${comparison.constraint_violations ?? 0}`],
+  ];
+  $("#ops-slo-list").innerHTML = sloItems.map(([label, value]) => `
+    <article><span>${escapeHTML(label)}</span><strong>${escapeHTML(value)}</strong></article>
+  `).join("");
+}
+
+function renderDailyLedger() {
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const snapshot = state.energySnapshot;
+  const parallel = state.parallel;
+  const hasData = Boolean(snapshot);
+  const rawRows = snapshot?.environment_signals?.raw_rows || 0;
+  const replayDate = snapshot?.environment_signals?.replay_date;
+  const totalLoad = Number(state.campusSimulation?.todayLoad || 0);
+  const totalCost = Number(parallel?.baseline_cost_yuan || state.campusSimulation?.todayCost || 0);
+  const optimizedCost = Number(parallel?.optimized_cost_yuan || 0);
+  const savings = Number(parallel?.savings_yuan || 0);
+  $("#today-ledger-date").textContent = `${today} · 今天`;
+  $("#today-ledger-status").textContent = hasData ? `${rawRows} 条测量已归一化` : "等待载入样本";
+  $("#today-ledger-source").textContent = hasData
+    ? `${snapshot.source}${replayDate ? " · " + replayDate : ""}`
+    : "尚未载入数据";
+  $("#today-ledger-time").textContent = hasData ? "00:00-24:00 · 96 点回放/滚动计划" : "00:00-24:00 · 96 点计划";
+  $("#today-ledger-copy").textContent = hasData
+    ? "当前数据已就绪，可查看各时段能源收支。生成调度方案后，在相同输入下比较费用，并查看对应审计与模拟结果。"
+    : "载入本地样本后，这里归集当日的能量收支、方案变更和模拟回执。";
+  $("#today-ledger-load").textContent = hasData ? `Load ${totalLoad.toFixed(1)} kWh` : "Load --";
+  $("#today-ledger-cost").textContent = parallel
+    ? `Cost ¥${optimizedCost.toFixed(2)} / save ¥${savings.toFixed(2)}`
+    : hasData ? `Cost ¥${totalCost.toFixed(2)}` : "Cost --";
+  $("#today-ledger-runs").textContent = parallel ? `${parallel.cursor || 0}/96 intervals` : hasData ? "1 data run" : "0 runs";
+}
+
+function setWorkspaceMode(activeRail = "nav-workspace") {
+  showPage(activeRail === "nav-trace" || activeRail === "nav-safety" ? "planning" : "overview");
+  $(".app-shell").classList.remove("home-mode");
+  $("#home-view").hidden = true;
+  setActiveRail(activeRail);
+}
+
+function openHome() {
+  showPage("records");
+  setAgentDirectory(false);
+  $("#ops-drawer").hidden = true;
+  $(".app-shell").classList.add("home-mode");
+  $("#home-view").hidden = false;
+  setActiveRail("nav-overview");
+  renderDailyLedger();
+  drawHomeCharts();
+}
+
+function resetLeaderConversation() {
+  state.activeHistory = "new";
+  state.activeScenario = null;
+  state.run = null;
+  state.task = null;
+  state.context = null;
+  state.candidates = [];
+  state.audit = [];
+  state.events = [];
+  state.evidence = null;
+  state.approval = null;
+  state.selectedAgent = "team_leader";
+  state.agentThreads = {};
+  state.pendingExecutionScenario = null;
+  renderSelectedAgent();
+  renderTask();
+  renderCandidates();
+  renderTrace();
+  renderOpsReport();
+  renderAgentThread("team_leader");
+}
+
+async function startNewSession() {
+  if (state.replayTimer) window.clearInterval(state.replayTimer);
+  state.replayTimer = null;
+  [
+    "powerpilot.workspace.savedSnapshot",
+    "powerpilot.workspace.agentThreads",
+    "powerpilot.workspace.runtimeSessionId",
+    "powerpilot.workspace.agentteamsTaskId",
+    "powerpilot.workspace.planLedger",
+    "powerpilot.workspace.parallelState",
+    "powerpilot.workspace.parallelHistory",
+  ].forEach((key) => window.localStorage.removeItem(key));
+  try { await request("/api/data/reset", { method: "POST" }); } catch {}
+  state.energySnapshot = null;
+  state.replayCursor = null;
+  state.chartTick = 0;
+  state.planLedger = [];
+  state.flowPreview = null;
+  state.lastCampusFlow = null;
+  state.campusSimulation = {
+    optimized: false,
+    time: "未接入真实数据",
+    balance: "等待 CSV",
+    load: "-- kW",
+    generation: "-- kW",
+    storage: "--",
+    storageFlow: "--",
+    gridImport: "-- kW",
+    todayLoad: 0, todayGen: 0, todayGrid: 0, todayCharge: 0, todayDischarge: 0, todayCost: 0,
+    totalLoad: 0, fromGen: 0, fromStorage: 0, fromGrid: 0, toLoad: 0, toStorageCharge: 0, toGridExport: 0,
+    wastedKwh: null,
+    extraCost: null,
+  };
+  resetLeaderConversation();
+  renderDailyLedger();
+  renderPowerChart();
+  renderCsvCostComparison();
+  renderPlanLedger();
+  renderReplayControl();
+  renderCampusSimulation();
+  toast("已开启新会话，等待上传园区数据");
+}
+
+function openNewWorkspace() {
+  setAgentDirectory(false);
+  $("#ops-drawer").hidden = true;
+  setWorkspaceMode("nav-workspace");
+}
+
+function mapActorToAgentId(actor) {
+  const map = {
+    "Team Leader": "team_leader",
+    "Perception Agent": "perception_agent",
+    "Dispatch Agent": "dispatch_agent",
+    "Audit Agent": "audit_agent",
+    "Execution Agent": "execution_agent",
+    "Execution Worker": "execution_agent",
+    "Human Approval": "team_leader",
+    "Human Operator": "team_leader",
+    "Verification": "execution_agent",
+  };
+  return map[actor] || "team_leader";
+}
+
+function formatEventChatText(event) {
+  const time = new Date(event.timestamp).toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  let text = `**${event.reason}**\n_(${time} · ${event.to_state})_\n`;
+
+  if ((event.to_state === "SENSING" || event.to_state === "CONTEXT_VALIDATED" || event.to_state === "REPLANNING_REQUIRED") && state.context) {
+    text += `\n\`\`\`json\n${JSON.stringify({
+      context_id: state.context.context_id,
+      context_hash: state.context.context_hash?.slice(0, 16) + "...",
+      changes: state.context.changes,
+      data_quality: state.context.data_quality,
+    }, null, 2)}\n\`\`\``;
+  }
+
+  if (event.to_state === "PLANNING" && state.candidates?.length) {
+    text += `\n\`\`\`json\n${JSON.stringify(state.candidates.map(c => ({
+      id: c.candidate_id,
+      name: c.name,
+      priority: c.priority,
+      cost_yuan: c.cost_yuan,
+      peak_kw: c.max_power_kw,
+      transformer_pct: c.transformer_load_percent,
+      soc_range: `${c.soc_min_percent}%-${c.soc_max_percent}%`,
+      status: c.status,
+    })), null, 2)}\n\`\`\``;
+  }
+
+  if ((event.to_state === "AUDITING" || event.to_state === "AWAITING_APPROVAL") && state.audit?.length) {
+    text += `\n\`\`\`json\n${JSON.stringify(state.audit.map(a => ({
+      candidate: a.candidate_id,
+      verdict: a.verdict,
+      reason: a.reason,
+      transformer_pct: a.transformer_load_percent,
+      safety_limit_pct: a.safety_limit_percent,
+      checks: a.checks,
+    })), null, 2)}\n\`\`\``;
+  }
+
+  if (event.to_state === "EXECUTING" && state.evidence?.trace_steps) {
+    text += `\n\`\`\`json\n${JSON.stringify({
+      execution_commands: state.evidence.trace_steps?.filter(s => s[0].includes("Execution")),
+    }, null, 2)}\n\`\`\``;
+  }
+
+  return text;
+}
+
+function renderEventsToChat() {
+  return;
+  const container = $("#chat-messages");
+  if (!state.events?.length) return;
+  if (container.querySelector("[data-run-marker]")) return;
+
+  const marker = document.createElement("div");
+  marker.dataset.runMarker = "true";
+  marker.hidden = true;
+  container.append(marker);
+
+  for (const event of state.events) {
+    const agentId = mapActorToAgentId(event.actor);
+    addChatMessage("agent", formatEventChatText(event), agentId, { persist: false });
+  }
+
+  if (state.task?.state === "AWAITING_APPROVAL") {
+    const candidateB = state.candidates.find(c => c.candidate_id === "Candidate-B");
+    const auditB = state.audit.find(a => a.candidate_id === "Candidate-B");
+    const text = state.language === "zh"
+      ? `## 等待人工审批\n\n**${candidateB?.name || "Candidate-B"}** 已通过独立审核，建议执行。\n\n- 成本: ¥${Math.round(candidateB?.cost_yuan || 0).toLocaleString()}\n- 峰值功率: ${Math.round(candidateB?.max_power_kw || 0)} kW\n- 变压器负载: ${candidateB?.transformer_load_percent || "--"}%\n- SOC 范围: ${candidateB?.soc_min_percent || "--"}% - ${candidateB?.soc_max_percent || "--"}%\n\n审核结论: ${auditB?.reason || ""}\n\n请在下方选择操作:`
+      : `## Awaiting Human Approval\n\n**${candidateB?.name || "Candidate-B"}** passed independent audit.\n\n- Cost: ¥${Math.round(candidateB?.cost_yuan || 0).toLocaleString()}\n- Peak: ${Math.round(candidateB?.max_power_kw || 0)} kW\n- Transformer: ${candidateB?.transformer_load_percent || "--"}%\n\nPlease choose an action:`;
+    addChatMessage("agent", text, "execution_agent", {
+      meta: { action: "confirm_execution", scenarioKey: state.run?.task_id || "compound_change" },
+      persist: false,
+    });
+  }
+
+  container.scrollTop = container.scrollHeight;
+}
+
+async function refreshTask(taskId) {
+  const [task, context, candidates, audit, events, evidence] = await Promise.all([
+    request(`/api/tasks/${taskId}`),
+    request(`/api/tasks/${taskId}/context`),
+    request(`/api/tasks/${taskId}/candidates`),
+    request(`/api/tasks/${taskId}/audit`),
+    request(`/api/tasks/${taskId}/events`),
+    request(`/api/tasks/${taskId}/evidence`),
+  ]);
+  state.task = task;
+  state.context = context;
+  state.candidates = candidates;
+  state.audit = audit;
+  state.events = events;
+  state.evidence = evidence;
+  renderTask();
+  renderCandidates();
+  renderTrace();
+  loadOpsEvidence();
+  renderOpsReport();
+  renderDailyLedger();
+  renderTaskCostComparison();
+  renderEventsToChat();
+}
+
+async function runDemo() {
+  try {
+    state.activeScenario = null;
+    state.approval = null;
+    state.run = await request("/api/demo/run", { method: "POST" });
+    await refreshTask(state.run.task_id);
+    showPage("planning");
+    toast(state.language === "zh" ? "场景已创建，Candidate B 等待人工审批。" : "Scenario created. Candidate B is awaiting human approval.");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function approveCandidateB() {
+  if (!state.run || !state.context) return;
+  try {
+    state.approval = await request(`/api/tasks/${state.run.task_id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({
+        candidate_id: "Candidate-B",
+        task_version: state.context.task_version,
+        context_hash: state.context.context_hash,
+        approver: "Human Operator",
+        reason: "Candidate B passed independent audit and remains bound to the current context hash.",
+      }),
+    });
+    await refreshTask(state.run.task_id);
+    showPage("planning");
+    toast(state.language === "zh" ? "Candidate B 已审批。" : "Candidate B approved.");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function executeCandidateB() {
+  if (!state.run || !state.context) return;
+  try {
+    await request(`/api/tasks/${state.run.task_id}/execute`, {
+      method: "POST",
+      body: JSON.stringify({
+        candidate_id: "Candidate-B",
+        task_version: state.context.task_version,
+        context_hash: state.context.context_hash,
+        idempotency_key: "PP-DEMO-B-NORMAL",
+      }),
+    });
+    await refreshTask(state.run.task_id);
+    showPage("planning");
+    toast(state.language === "zh" ? "执行已验证，证据已封存。" : "Execution verified. Evidence sealed.");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function runRollback() {
+  try {
+    state.activeScenario = null;
+    state.approval = null;
+    state.run = await request("/api/demo/run-rollback", { method: "POST" });
+    await refreshTask(state.run.task_id);
+    showPage("planning");
+    toast(state.language === "zh" ? "回滚场景已完成。" : "Rollback scenario completed.");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function openEvidence() {
+  if (!state.task) return;
+  state.evidence = await request(`/api/tasks/${state.task.task_id}/evidence`);
+  $("#evidence-json").textContent = JSON.stringify(state.evidence, null, 2);
+  $("#evidence-dialog").showModal();
+}
+
+function openTraceDetail(index) {
+  const event = state.events[index];
+  if (!event) return;
+  $("#trace-dialog-title").textContent = event.event_id;
+  $("#trace-json").textContent = JSON.stringify(event, null, 2);
+  $("#trace-dialog").showModal();
+}
+
+function openCandidateDetail(candidateId) {
+  const candidate = state.candidates.find((item) => item.candidate_id === candidateId);
+  const verdict = state.audit.find((item) => item.candidate_id === candidateId);
+  if (!candidate) return;
+  $("#candidate-dialog-title").textContent = `${candidate.candidate_id} · ${candidate.name}`;
+  $("#candidate-json").textContent = JSON.stringify({ candidate, audit_verdict: verdict || null }, null, 2);
+  $("#candidate-dialog").showModal();
+}
+
+function reviewCandidates() {
+  $("#candidate-list").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function openTodayLedger() {
+  setWorkspaceMode("nav-workspace");
+  showPage("analysis");
+  renderDailyLedger();
+}
+
+async function openWorkspaceFromHistory(kind) {
+  const thread = historyThreads[kind] || historyThreads.weather;
+  state.activeHistory = kind;
+  state.activeScenario = null;
+  state.selectedAgent = thread.agentId;
+  setWorkspaceMode("nav-trace");
+  $$(".history-card").forEach((card) => {
+    card.classList.toggle("active", card.dataset.openWorkspace === kind);
+  });
+  renderSelectedAgent();
+  renderThreadMessages(kind);
+  if (thread.taskId) {
+    try {
+      try { await refreshTask(thread.taskId); } catch {
+        const demo = await request("/api/demo/run", { method: "POST" });
+        await refreshTask(demo.task_id);
+      }
+      state.run = {
+        task_id: state.task.task_id,
+        task_version: state.task.task_version,
+        trace_id: state.task.trace_id,
+        state: state.task.state,
+        context_id: state.context.context_id,
+        context_hash: state.context.context_hash,
+      };
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+  showPage("planning");
+}
+
+function setupCampus() {
+  const canvas = $("#campus-3d");
+  if (!canvas) return;
+  state.campus3d = createCampus3D(canvas, updateAssetLabels);
+  renderCampusSimulation();
+  $("#reset-camera").addEventListener("click", () => {
+    state.campus3d?.reset?.();
+  });
+  $("#campus-edit-layout")?.addEventListener("click", (event) => {
+    const button = event.currentTarget;
+    const active = button.getAttribute("aria-pressed") !== "true";
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    button.textContent = active ? "完成调整" : "调整节点";
+    state.campus3d?.setEditMode?.(active);
+  });
+  $$(".campus-add").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.campus3d?.addModule?.(button.dataset.campusAdd);
+    });
+  });
+  $("#campus-delete").addEventListener("click", () => {
+    state.campus3d?.deleteSelected?.();
+  });
+}
+
+async function restoreLatestDemo() {
+  state.run = null;
+  state.task = null;
+  state.context = null;
+  state.candidates = [];
+  state.audit = [];
+  state.events = [];
+  state.evidence = null;
+  renderTask();
+  renderCandidates();
+  renderTrace();
+  renderOpsReport();
+}
+
+async function restoreEnergyDataConnection() {
+  try {
+    state.energySnapshot = await request("/api/data/snapshot/current");
+    state.monitor = await request("/api/monitor/status");
+    state.replayCursor = state.energySnapshot.current_interval ?? state.replayCursor ?? 0;
+    state.chartTick = state.monitor?.cursor ?? state.replayCursor ?? state.chartTick;
+    if (state.monitor?.task_id && state.energySnapshot) await loadMonitorTask(state.monitor.task_id);
+    await renderMonitor();
+    await applySnapshotToCampus();
+    await startCampusReplay();
+  } catch {
+    const savedSnapshot = localStorage.getItem("powerpilot.workspace.savedSnapshot");
+    if (savedSnapshot) {
+      try {
+        state.energySnapshot = JSON.parse(savedSnapshot);
+        // Display-only clock values do not belong to the validated snapshot contract.
+        delete state.energySnapshot.simulated_time;
+        state.energySnapshot = await request("/api/data/snapshot/restore", {
+          method: "POST",
+          body: JSON.stringify(state.energySnapshot),
+        });
+        state.replayCursor = state.energySnapshot.current_interval ?? 0;
+        await startCampusReplay();
+        setConnectorStatus(
+          "已恢复上次的数据回放",
+          [{ kind: "DATA_REPLAY_RESTORED", detail: "本地服务已接收保存的样本，继续按选定时段回放。" }],
+        );
+        await applySnapshotToCampus();
+        return;
+      } catch { toast("上次样本未能恢复，请重新载入数据。"); }
+    }
+    state.energySnapshot = null;
+    await applySnapshotToCampus();
+  }
+}
+
+async function renderMonitor() {
+  const monitor = state.monitor;
+  if (!monitor) return;
+  $(".control-bar").classList.toggle("has-monitor", Boolean(monitor.running || monitor.task_id || state.parallel));
+  $("#monitor-state").textContent = monitor.running ? "READING" : "STOPPED";
+  $("#monitor-plan").textContent = monitor.plan_version || "V1";
+  $("#monitor-agents").textContent = monitor.agentteams_awake ? "AWAKE" : "SLEEPING";
+  $("#monitor-interval").textContent = `${String(monitor.cursor).padStart(2, "0")} / 95`;
+  $("#monitor-pulse").className = monitor.agentteams_awake ? "alert" : monitor.running ? "live" : "";
+  const current = monitor.current;
+  $("#monitor-source-note").textContent = current
+    ? `Load ${Number(current.load_kw).toFixed(2)} kW · PV ${Number(current.pv_kw).toFixed(2)} kW · SOC ${(Number(current.battery_soc) * 100).toFixed(0)}%`
+    : "等待本地数据 · 光伏 / 负荷 / 储能 / 购电 · 15 分钟快照";
+  const lifecycleKinds = new Set(["V1_INVALIDATED", "AGENTTEAMS_WOKEN", "V2_REPLANNED_AND_AUDITED"]);
+  const lifecycle = (monitor.events || []).filter((event) => lifecycleKinds.has(event.kind));
+  const recent = (monitor.events || []).filter((event) => !lifecycleKinds.has(event.kind)).slice(-3);
+  const visibleEvents = [...lifecycle, ...recent].slice(-7).reverse();
+  $("#monitor-event-list").innerHTML = visibleEvents.map((event) => `
+    <p><strong>${escapeHTML(event.kind)}</strong> · ${escapeHTML(event.detail)}</p>
+  `).join("") || "<p>回放数据在本地处理。模型服务按需配置。</p>";
+  const approved = Boolean(state.task?.approval?.approved);
+  $("#monitor-approve").disabled = !monitor.task_id || approved || state.task?.state !== "AWAITING_APPROVAL";
+  $("#monitor-execute").disabled = !approved || Boolean(state.task?.execution_summary);
+  $("#monitor-evidence").disabled = !state.task?.evidence_sha256;
+  // Rolling reoptimize: enabled when a task exists with selected plan and monitor is running
+  $("#monitor-rolling").disabled = !monitor.task_id || !state.task?.selected_plan_id || !monitor.running;
+
+  await applySnapshotToCampus();
+}
+
+async function renderParallel() {
+  const p = state.parallel;
+  if (!p) return;
+  $(".control-bar").classList.add("has-monitor");
+  $("#monitor-state").textContent = p.running ? "RUNNING" : "STOPPED";
+  $("#monitor-plan").textContent = "PARALLEL";
+  $("#monitor-agents").textContent = p.agentteams_active ? "AWAKE" : "SLEEPING";
+  $("#monitor-interval").textContent = `${String(p.cursor).padStart(2, "0")} / 95`;
+  $("#monitor-pulse").className = p.agentteams_active ? "live" : p.running ? "alert" : "";
+
+  const baselineCost = (p.baseline_cost_yuan ?? p.baseline_cumulative_cost_yuan ?? 0);
+  const optimizedCost = adjustedOptimizedCost(p);
+  const savingsYuan = (p.savings_yuan ?? (baselineCost - optimizedCost) ?? 0);
+  const savingsPct = (p.savings_percent ?? (baselineCost > 0 ? (savingsYuan / baselineCost * 100) : 0) ?? 0);
+  $("#cost-baseline").textContent = `¥${baselineCost.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+  $("#cost-optimized").textContent = `¥${optimizedCost.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+  $("#cost-savings").textContent = `¥${savingsYuan.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+  $("#savings-percent").textContent = `节省 ${savingsPct.toFixed ? savingsPct.toFixed(2) : savingsPct}%`;
+  $("#parallel-status").textContent = p.last_event || p.event || "";
+
+  // Deviation metrics
+  const lastPoint = p.interval_history?.[p.interval_history.length - 1];
+  $("#deviation-pv").textContent = lastPoint ? `${(lastPoint.pv_deviation_percent ?? 0).toFixed(1)}%` : "--%";
+  $("#deviation-load").textContent = lastPoint ? `${(lastPoint.load_deviation_percent ?? 0).toFixed(1)}%` : "--%";
+  $("#reopt-count").textContent = `${p.total_reoptimizations || 0} 次`;
+  const lastReopt = p.reoptimization_events?.[p.reoptimization_events.length - 1];
+  $("#reopt-reason").textContent = lastReopt ? (lastReopt.reason || "").substring(0, 30) + "..." : "--";
+
+  const curLoad = p.current_load_kw ?? lastPoint?.actual_load_kw ?? 0;
+  const curPv = p.current_pv_kw ?? lastPoint?.actual_pv_kw ?? 0;
+  const curSoc = p.current_soc ?? (lastPoint?.actual_soc ?? 0);
+  $("#monitor-source-note").textContent = `Load ${(curLoad).toFixed(2)} kW · PV ${(curPv).toFixed(2)} kW · SOC ${((curSoc) * 100).toFixed(0)}%`;
+  $("#monitor-approve").disabled = true;
+  $("#monitor-execute").disabled = true;
+  $("#monitor-evidence").disabled = true;
+  $("#monitor-rolling").disabled = true;
+
+  drawCostChart(p);
+  drawPowerChart(p);
+  renderDailyLedger();
+}
+
+function firstReoptInterval(p) {
+  const intervals = (p?.reoptimization_events || [])
+    .map((event) => Number(event.interval))
+    .filter((value) => Number.isFinite(value));
+  return intervals.length ? Math.min(...intervals) : null;
+}
+
+function adjustedOptimizedAt(point, reoptStart) {
+  const baseline = point.baseline_cumulative_cost_yuan ?? 0;
+  if (reoptStart == null || Number(point.interval ?? 0) < reoptStart) return baseline;
+  return point.optimized_cumulative_cost_yuan ?? baseline;
+}
+
+function adjustedOptimizedCost(p) {
+  const history = p?.interval_history || [];
+  if (!history.length) return p?.optimized_cost_yuan ?? p?.optimized_cumulative_cost_yuan ?? 0;
+  const reoptStart = firstReoptInterval(p);
+  const last = history[history.length - 1];
+  return adjustedOptimizedAt(last, reoptStart);
+}
+
+function drawCostChart(p) {
+  const canvas = $("#cost-chart");
+  if (!canvas || !p?.interval_history?.length) return;
+  const { context, width, height } = resizeCanvas(canvas);
+  const history = p.interval_history;
+  const reoptEvents = p.reoptimization_events || [];
+
+  const inset = { left: 50, top: 16, right: 16, bottom: 28 };
+  const plotW = width - inset.left - inset.right;
+  const plotH = height - inset.top - inset.bottom;
+
+  // Background
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+
+  // Find max cost for scaling
+  const maxCost = Math.max(
+    ...history.map((h) => h.baseline_cumulative_cost_yuan ?? 0),
+    ...history.map((h) => adjustedOptimizedAt(h, firstReoptInterval(p))),
+    0.01,
+  );
+
+  const count = history.length;
+  const totalIntervals = 96;
+  const reoptStart = firstReoptInterval(p);
+
+  // Grid lines
+  context.strokeStyle = "rgba(148, 163, 184, .2)";
+  context.lineWidth = 1;
+  for (let row = 0; row <= 4; row++) {
+    const y = inset.top + (plotH * row) / 4;
+    context.beginPath(); context.moveTo(inset.left, y); context.lineTo(width - inset.right, y); context.stroke();
+  }
+  for (let col = 0; col <= 4; col++) {
+    const x = inset.left + (plotW * col) / 4;
+    context.beginPath(); context.moveTo(x, inset.top); context.lineTo(x, height - inset.bottom); context.stroke();
+  }
+
+  // Helper: map interval to x
+  function xAt(i) { return inset.left + (plotW * i) / (totalIntervals - 1); }
+  function yAt(cost) { return inset.top + plotH * (1 - cost / maxCost); }
+
+  // Draw savings area (between curves)
+  context.fillStyle = "rgba(21, 130, 115, .12)";
+  context.beginPath();
+  context.moveTo(xAt(0), yAt((history[0].baseline_cumulative_cost_yuan ?? 0)));
+  for (let i = 0; i < count; i++) {
+    context.lineTo(xAt(history[i].interval ?? i), yAt((history[i].baseline_cumulative_cost_yuan ?? 0)));
+  }
+  for (let i = count - 1; i >= 0; i--) {
+    context.lineTo(xAt(history[i].interval ?? i), yAt(adjustedOptimizedAt(history[i], reoptStart)));
+  }
+  context.closePath();
+  context.fill();
+
+  // Baseline curve (red)
+  context.beginPath();
+  context.strokeStyle = "#9faeb0";
+  context.lineWidth = 2;
+  for (let i = 0; i < count; i++) {
+    const x = xAt(history[i].interval ?? i);
+    const y = yAt((history[i].baseline_cumulative_cost_yuan ?? 0));
+    if (i === 0) context.moveTo(x, y); else context.lineTo(x, y);
+  }
+  context.stroke();
+
+  // Optimized curve (green)
+  context.beginPath();
+  context.strokeStyle = "#158273";
+  context.lineWidth = 2;
+  for (let i = 0; i < count; i++) {
+    const x = xAt(history[i].interval ?? i);
+    const y = yAt(adjustedOptimizedAt(history[i], reoptStart));
+    if (i === 0) context.moveTo(x, y); else context.lineTo(x, y);
+  }
+  context.stroke();
+
+  // Re-optimization markers (yellow diamonds)
+  reoptEvents.forEach((event) => {
+    const point = history.find((h) => (h.interval ?? -1) === (event.interval ?? -1));
+    if (!point) return;
+    const x = xAt(event.interval ?? 0);
+    const y = yAt((point.optimized_cumulative_cost_yuan ?? 0));
+    context.fillStyle = "#c57144";
+    context.beginPath();
+    context.moveTo(x, y - 5); context.lineTo(x + 5, y); context.lineTo(x, y + 5); context.lineTo(x - 5, y);
+    context.closePath(); context.fill();
+  });
+
+  // Y-axis labels
+  context.fillStyle = "#6b7280";
+  context.font = "10px Inter, sans-serif";
+  context.textAlign = "right";
+  for (let row = 0; row <= 4; row++) {
+    const cost = (maxCost * (4 - row)) / 4;
+    const y = inset.top + (plotH * row) / 4;
+    context.fillText(`¥${cost.toFixed(1)}`, inset.left - 6, y + 3);
+  }
+
+  // X-axis labels (time)
+  context.textAlign = "center";
+  const times = ["00:00", "06:00", "12:00", "18:00", "24:00"];
+  const timeIndices = [0, 24, 48, 72, 95];
+  for (let i = 0; i < times.length; i++) {
+    const x = xAt(timeIndices[i]);
+    context.fillText(times[i], x, height - inset.bottom + 14);
+  }
+
+  // Current cursor line
+  if (p.cursor > 0 && p.cursor < totalIntervals) {
+    const cx = xAt(p.cursor);
+    context.strokeStyle = "rgba(43, 191, 208, .34)";
+    context.setLineDash([3, 3]);
+    context.beginPath(); context.moveTo(cx, inset.top); context.lineTo(cx, height - inset.bottom); context.stroke();
+    context.setLineDash([]);
+  }
+}
+
+function drawPowerChart(p) {
+  const canvas = $("#power-chart");
+  if (!canvas || !p?.interval_history?.length) return;
+  const { context, width, height } = resizeCanvas(canvas);
+  const h = p.interval_history;
+  const inset = { left: 48, top: 14, right: 14, bottom: 26 };
+  const pw = width - inset.left - inset.right;
+  const ph = height - inset.top - inset.bottom;
+  context.fillStyle = "#ffffff"; context.fillRect(0, 0, width, height);
+  const maxP = Math.max(0.01, ...h.map(x => Math.max(x.actual_load_kw || 0, x.actual_pv_kw || 0, x.actual_grid_kw || 0, x.optimized_grid_kw || 0)));
+  const xAt = i => inset.left + pw * i / 95;
+  const yAt = v => inset.top + ph * (1 - v / maxP);
+  // grid
+  context.strokeStyle = "rgba(148, 163, 184, .2)";
+  for (let r = 0; r <= 4; r++) {
+    const y = inset.top + ph * r / 4;
+    context.beginPath(); context.moveTo(inset.left, y); context.lineTo(width - inset.right, y); context.stroke();
+  }
+  function drawLine(arr, key, col) {
+    context.beginPath(); context.strokeStyle = col; context.lineWidth = 2;
+    for (let i = 0; i < arr.length; i++) {
+      const x = xAt(arr[i].interval ?? i); const y = yAt(arr[i][key] || 0);
+      if (i === 0) context.moveTo(x, y); else context.lineTo(x, y);
+    }
+    context.stroke();
+  }
+  drawLine(h, "actual_load_kw", "#b16c50");
+  drawLine(h, "actual_pv_kw", "#a18739");
+  drawLine(h, "actual_grid_kw", "#287e86");
+  // axes
+  context.fillStyle = "#6b7280"; context.font = "10px Inter, sans-serif"; context.textAlign = "right";
+  for (let r = 0; r <= 4; r++) context.fillText(`${(maxP * (4 - r) / 4).toFixed(1)}`, inset.left - 6, inset.top + ph * r / 4 + 3);
+  context.textAlign = "center";
+  const times = ["00:00", "06:00", "12:00", "18:00", "24:00"];
+  const idxs = [0, 24, 48, 72, 95];
+  for (let i = 0; i < times.length; i++) context.fillText(times[i], xAt(idxs[i]), height - inset.bottom + 14);
+  // cursor line
+  if (p.cursor > 0 && p.cursor < 96) {
+    const cx = xAt(p.cursor); context.strokeStyle = "rgba(43, 191, 208, .34)"; context.setLineDash([3, 3]);
+    context.beginPath(); context.moveTo(cx, inset.top); context.lineTo(cx, height - inset.bottom); context.stroke(); context.setLineDash([]);
+  }
+  loadOpsEvidence();
+}
+
+function ensureDayGroup(dateKey, subtitle = "园区日调度") {
+  const board = $(".insight-board");
+  if (!board) return null;
+  let group = board.querySelector(`[data-day-group="${dateKey}"]`);
+  if (group) return group;
+  group = document.createElement("section");
+  group.className = "day-group";
+  group.dataset.dayGroup = dateKey;
+  group.innerHTML = `
+    <header>
+      <div><strong>${escapeHTML(dateKey)}</strong><span>${escapeHTML(subtitle)}</span></div>
+      <small>运行记录</small>
+    </header>`;
+  board.prepend(group);
+  return group;
+}
+
+function historyCardMarkup(title, dateStr, description) {
+  return `
+    <div class="history-body">
+      <div class="history-tags"><span class="tag">已完成</span><span>Trace ready</span></div>
+      <h2>${escapeHTML(title)}</h2>
+      <time>${escapeHTML(dateStr)}</time>
+      <p>${escapeHTML(description)}</p>
+      <div class="history-metrics">
+        <span>96 intervals</span>
+        <span>Evidence linked</span>
+        <span>Replay ready</span>
+      </div>
+    </div>`;
+}
+
+async function loadMonitorTask(taskId) {
+  const task = await request(`/api/tasks/${taskId}`);
+  state.task = task;
+  state.run = { task_id: task.task_id, task_version: task.task_version, state: task.state };
+  state.context = { context_hash: task.context_hash || "opencem-snapshot-contract" };
+  state.approval = task.approval;
+  state.candidates = task.plans.map((plan) => ({
+    candidate_id: plan.plan_id,
+    name: plan.profile,
+    cost_yuan: plan.metrics.total_cost_yuan,
+    max_power_kw: plan.metrics.peak_grid_kw,
+    soc_min_percent: Math.round(Math.min(...plan.points.map((point) => point.soc_end)) * 100),
+    soc_max_percent: Math.round(Math.max(...plan.points.map((point) => point.soc_end)) * 100),
+    transformer_load_percent: Math.round(plan.metrics.peak_grid_kw / task.scenario_snapshot.site.transformer_capacity_kw * 1000) / 10,
+  }));
+  state.audit = task.audits.map((audit) => ({
+    candidate_id: audit.plan_id,
+    verdict: audit.decision === "rejected" ? "rejected" : "audit_approved",
+    reason: audit.findings.map((item) => item.message).join("; ") || `Independent checks passed; improvement ¥${audit.improvement_yuan.toFixed(2)}`,
+  }));
+  state.events = task.trace.map((event) => ({
+    timestamp: event.timestamp,
+    actor: event.actor,
+    reason: event.action,
+    to_state: event.status === "blocked" ? "FAILED" : task.state,
+    detail: event.detail,
+  }));
+  renderTask();
+  renderCandidates();
+  renderTrace();
+  renderTaskCostComparison(task);
+  await applySnapshotToCampus();
+}
+
+function formatParallelTrace(t) {
+  const step = t.step || "";
+  const interval = t.interval != null ? `时段 ${t.interval}` : "";
+  if (step === "optimization_complete") return `✅ Agent Teams 初始优化完成 · 方案 ${(t.plan_id || "").slice(-6)} · 状态 ${t.state}`;
+  if (step === "optimization_failed") return `❌ 初始优化失败: ${t.error || ""}`;
+  if (step === "perception_observation") {
+    const lines = [
+      `📡 ${interval} · 感知 Agent 数据校验`,
+      `   PV 实际=${t.pv_actual}kW 预测=${t.pv_forecast}kW 偏差=${t.pv_deviation_percent}%`,
+      `   负荷 实际=${t.load_actual}kW 预测=${t.load_forecast}kW 偏差=${t.load_deviation_percent}%`,
+      `   SOC=${t.soc_actual}% 计划=${t.soc_plan != null ? t.soc_plan + "%" : "--"}`,
+    ];
+    if (t.status === "normal") {
+      lines.push(`   ✅ 所有指标在阈值范围内，现在不需要重新制定计划`);
+    } else {
+      lines.push(`   ⚠️ 检测到数据异常：${(t.reasons || []).join("；")}`);
+      lines.push(`   🔄 现在要重新计划！触发调度 Worker 重新优化...`);
+    }
+    return lines.join("\n");
+  }
+  if (step === "interval_dispatch") {
+    const lines = [
+      `📊 ${interval} · Agent 调度决策`,
+      `   负荷 ${t.load_kw}kW · 光伏 ${t.pv_kw}kW`,
+    ];
+    if (t.optimized_discharge_kw > 0.01) lines.push(`   🔋 储能放电 ${t.optimized_discharge_kw.toFixed(2)}kW → 电网购电 ${t.optimized_grid_kw.toFixed(2)}kW`);
+    else if (t.optimized_charge_kw > 0.01) lines.push(`   ⚡ 光伏余电充电 ${t.optimized_charge_kw.toFixed(2)}kW → 电网购电 ${t.optimized_grid_kw.toFixed(2)}kW`);
+    else lines.push(`   🔌 电网购电 ${t.optimized_grid_kw.toFixed(2)}kW`);
+    lines.push(`   SOC ${(t.soc_start * 100).toFixed(1)}% → ${(t.soc_end * 100).toFixed(1)}%`);
+    lines.push(`   基线成本 ¥${t.baseline_cost.toFixed(4)} · 优化成本 ¥${t.optimized_cost.toFixed(4)}`);
+    return lines.join("\n");
+  }
+  if (step === "plan_invalidated_and_reoptimized") return `🔄 ${interval} · 旧方案已废止\n   原因: ${(t.reasons || []).join("；")}\n   新方案: ${(t.new_plan_id || "").slice(-6)} · Agent: ${(t.agents || []).join(" → ")}`;
+  if (step === "dispatch_reoptimization_complete") return `✅ ${interval} · 调度 Worker 重新优化完成\n   新方案已部署: ${(t.new_plan_id || "").slice(-6)}`;
+  if (step === "reoptimize_failed") return `⚠️ ${interval} · 重优化失败: ${t.error || ""}`;
+  if (step === "plan_invalidated") return `⛔ ${interval} · 旧方案已废止`;
+  return `· ${step}${interval ? " · " + interval : ""}`;
+}
+
+let pollRetryCount = 0;
+const MAX_POLL_RETRIES = 5;
+
+async function pollParallelStep() {
+  try {
+    state.parallel = await request("/api/parallel/step", { method: "POST" });
+    pollRetryCount = 0;
+    state.chartTick = state.parallel.cursor;
+    try { renderParallel(); } catch (e) { console.error("renderParallel error:", e); }
+    try { await applySnapshotToCampus(); } catch (e) { console.error("applySnapshotToCampus error:", e); }
+    // Limit left chat messages to avoid DOM bloat causing browser lag
+    const chatContainer = $("#chat-messages");
+    while (chatContainer && chatContainer.children.length > 40) {
+      chatContainer.removeChild(chatContainer.firstChild);
+    }
+    const traces = state.parallel?.agentteams_trace || [];
+    const cursor = state.parallelTraceCursor || 0;
+    for (let i = cursor; i < traces.length; i++) {
+      try { appendRuntimeStatusMessage("team_leader", formatParallelTrace(traces[i])); } catch (e) {}
+    }
+    state.parallelTraceCursor = traces.length;
+    try { localStorage.setItem("powerpilot.workspace.parallelState", JSON.stringify(state.parallel)); } catch(e) {}
+    if (!state.parallel.running && state.parallelTimer) {
+      window.clearInterval(state.parallelTimer);
+      state.parallelTimer = null;
+      toast("平行对比完成；Agent Teams 决策已跑完全天");
+      saveParallelHistory();
+    }
+  } catch (error) {
+    pollRetryCount++;
+    console.error("pollParallelStep failed (retry " + pollRetryCount + "/" + MAX_POLL_RETRIES + "):", error);
+    if (pollRetryCount >= MAX_POLL_RETRIES && state.parallelTimer) {
+      window.clearInterval(state.parallelTimer);
+      state.parallelTimer = null;
+      toast("轮询连续失败 " + MAX_POLL_RETRIES + " 次，已停止。请刷新后重新上传 CSV。");
+    }
+  }
+}
+
+function saveParallelHistory() {
+  const thread = state.agentThreads["team_leader"];
+  if (!thread || thread.length < 3) return;
+  const key = "parallel_" + new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const messages = thread.filter(m => !m.intro).map(m => ({ role: m.role, text: m.text, agentId: m.agentId || "team_leader" }));
+  if (messages.length < 3) return;
+  historyThreads[key] = {
+    agentId: "team_leader",
+    en: { opener: "View parallel simulation", messages },
+    zh: { opener: "查看平行时空对比", messages },
+  };
+  const board = $(".insight-board");
+  if (board && !board.querySelector(`[data-open-workspace="${key}"]`)) {
+    const card = document.createElement("article");
+    card.className = "history-card";
+    card.dataset.openWorkspace = key;
+    const now = new Date();
+    const dayKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}`;
+    const dateStr = `${dayKey} ${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+    card.innerHTML = historyCardMarkup("平行时空对比 · 全天 Agent 决策", dateStr, "96 个时段完整调度记录，Agent Teams 感知→调度→审核→执行闭环。");
+    ensureDayGroup(dayKey)?.append(card);
+    card.addEventListener("click", () => openWorkspaceFromHistory(key));
+  }
+  try {
+    const saved = JSON.parse(localStorage.getItem("powerpilot.workspace.parallelHistory") || "[]");
+    if (!saved.some(s => s.key === key)) {
+      saved.push({ key, date: Date.now(), messages });
+      localStorage.setItem("powerpilot.workspace.parallelHistory", JSON.stringify(saved));
+    }
+  } catch(e) {}
+}
+
+function restoreParallelHistory() {
+  localStorage.removeItem("powerpilot.workspace.parallelHistory");
+}
+
+async function startParallelSimulation() {
+  try {
+    if (state.parallelTimer) window.clearInterval(state.parallelTimer);
+    state.activeScenario = null;
+    state.task = null;
+    state.approval = null;
+    // Start parallel simulation: runs full AgentTeams workflow once, then steps
+    state.parallel = await request("/api/parallel/start", { method: "POST" });
+    state.energySnapshot = await request("/api/data/snapshot/current");
+    state.parallelTraceCursor = 0;
+    renderParallel();
+    await applySnapshotToCampus();
+    const interval = state.speedMode === "normal" ? 15000 : 800;
+    state.parallelTimer = window.setInterval(pollParallelStep, interval);
+    toast(state.speedMode === "normal" ? "平行对比开始：实时流速（15秒/步）" : "平行对比开始：快速流速（0.8秒/步）");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function uploadEnergyCsv(file) {
+  if (!file) return;
+  try {
+    const response = await fetch(`/api/data/upload?filename=${encodeURIComponent(file.name)}`, {
+      method: "POST",
+      headers: { "Content-Type": "text/csv" },
+      body: await file.arrayBuffer(),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || "CSV upload failed");
+    if (state.parallelTimer) window.clearInterval(state.parallelTimer);
+    state.parallelTimer = null;
+    state.parallel = null;
+    localStorage.removeItem("powerpilot.workspace.parallelState");
+    state.energySnapshot = body;
+    state.replayCursor = body.current_interval || 0;
+    await applySnapshotToCampus();
+    await startCampusReplay({ reset: true });
+    renderCsvCostComparison();
+    renderDailyLedger();
+    setConnectorStatus(
+      `数据已就绪：${body.environment_signals.raw_rows} 条测量已归一化，能源网络与回放时钟同步`,
+      [{ kind: "DATA_REPLAY_RUNNING", detail: "CSV 已成为当前 world_state；时段和速度由后端回放钟控制。" }],
+    );
+    toast("数据已载入，开始回放 96 个时段");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function setConnectorStatus(text, events = []) {
+  const sourceNote = $("#monitor-source-note");
+  const eventList = $("#monitor-event-list");
+  if (sourceNote) sourceNote.textContent = text;
+  if (eventList) {
+    eventList.innerHTML = events.length
+      ? events.map((event) => `<p><strong>${escapeHTML(event.kind)}</strong> · ${escapeHTML(event.detail)}</p>`).join("")
+      : `<p>${escapeHTML(text)}</p>`;
+  }
+}
+
+async function testDemoDataConnection() {
+  try {
+    const snapshot = await request("/api/data/snapshot/current");
+    state.energySnapshot = snapshot;
+    state.replayCursor = snapshot.current_interval || 0;
+    setConnectorStatus(
+      `测试数据连接成功：${snapshot.source}，${snapshot.telemetry.length} 个 15 分钟时段`,
+      [{ kind: "TEST_DATA_CONNECTED", detail: "CSV 已归一化，能源网络开始全天用电回放。" }],
+    );
+    await applySnapshotToCampus();
+    await startCampusReplay({ reset: true });
+    renderDailyLedger();
+    toast("测试数据连接成功，开始全天运行");
+    $("#connector-dialog").close();
+  } catch {
+    setConnectorStatus(
+      "测试数据未连接：请先上传历史 CSV",
+      [{ kind: "TEST_DATA_MISSING", detail: "没有可用的历史测试数据，无法校验 96 个时段。" }],
+    );
+    toast("请先上传历史 CSV");
+  }
+}
+
+async function testLiveDataConnection() {
+  try {
+    const monitor = await request("/api/monitor/status");
+    state.monitor = monitor;
+    if (monitor.current) {
+      setConnectorStatus(
+        `本地监测数据可用：负荷 ${Number(monitor.current.load_kw).toFixed(2)} kW · 光伏 ${Number(monitor.current.pv_kw).toFixed(2)} kW · 储能 ${(Number(monitor.current.battery_soc) * 100).toFixed(0)}%`,
+        [{ kind: "LIVE_DATA_CONNECTED", detail: "本地监测服务已有回放数据，可用于状态检查。" }],
+      );
+      toast("本地监测数据可用");
+      renderMonitor();
+      await applySnapshotToCampus();
+      return;
+    }
+    setConnectorStatus(
+      "监测服务暂无数据：请先载入样本或上传 CSV",
+      [{ kind: "LIVE_DATA_MISSING", detail: "PowerPilot 使用本地数据回放，不连接生产设备。" }],
+    );
+    toast("监测服务暂无数据");
+  } catch (error) {
+    setConnectorStatus(
+      "无法读取本地监测服务：请检查应用是否运行",
+      [{ kind: "LIVE_DATA_ERROR", detail: error.message || "monitor/status 请求失败。" }],
+    );
+    toast("无法读取本地监测服务");
+  }
+}
+
+async function approveMonitorPlan() {
+  if (!state.monitor?.task_id) return;
+  try {
+    state.task = await request(`/api/tasks/${state.monitor.task_id}/approval-only`, {
+      method: "POST",
+      body: JSON.stringify({
+        approved: true,
+        approver: "Human Operator",
+        reason: "OpenCEM V2 passed independent audit; approve current Snapshot-bound plan.",
+      }),
+    });
+    state.approval = state.task.approval;
+    if (state.flowPreview) ledgerRecord("adopted", state.flowPreview.currentFlow, state.flowPreview.previewFlow);
+    clearCampusPlanPreview(true);
+    renderTask();
+    renderMonitor();
+    toast("已采用 Agent 新方案，园区电流切换到优化流向");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function executeMonitorPlan() {
+  if (!state.monitor?.task_id) return;
+  try {
+    state.task = await request(`/api/tasks/${state.monitor.task_id}/execute-approved`, { method: "POST" });
+    state.approval = state.task.approval;
+    clearCampusPlanPreview(true);
+    state.monitor = await request("/api/monitor/status");
+    await loadMonitorTask(state.task.task_id);
+    renderMonitor();
+    toast(state.task.state === "ROLLBACK" ? "偏差超限，已安全回滚" : "V2 模拟执行完成，证据已封存");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function adoptFlowPlan() {
+  const preview = state.flowPreview;
+  if (preview) ledgerRecord("adopted", preview.currentFlow, preview.previewFlow);
+  clearCampusPlanPreview(true);
+  if (state.monitor?.task_id && state.task?.state === "AWAITING_APPROVAL" && !state.approval) {
+    await approveMonitorPlan();
+    return;
+  }
+  if (state.task?.state === "AWAITING_APPROVAL") {
+    state.approval = { approved: true, approver: "Human Operator", reason: "用户采用 Agent 新能源流方案" };
+    state.task = { ...state.task, approval: state.approval };
+    renderTask();
+  }
+  toast("已采用方案：虚线预览变为实时电流，限发和购电下降");
+}
+
+function rejectFlowPlan() {
+  const preview = state.flowPreview;
+  if (preview) ledgerRecord("rejected", preview.currentFlow, preview.previewFlow);
+  clearCampusPlanPreview(false);
+  toast("已拒绝方案：园区保持当前电流方式");
+}
+
+async function rollingReoptimizeMonitor() {
+  if (!state.monitor?.task_id) return;
+  const taskId = state.monitor.task_id;
+  const cursor = state.monitor?.cursor ?? 0;
+  const point = state.energySnapshot?.telemetry?.[cursor];
+  const actualSoc = point ? point.battery_soc : 0.55;
+  toast("正在对剩余时段做滚动时域鲁棒重优化...");
+  try {
+    state.task = await request(`/api/tasks/${taskId}/rolling-reoptimize`, {
+      method: "POST",
+      body: JSON.stringify({
+        current_interval: cursor,
+        actual_soc: actualSoc,
+        robustness_mode: "worst_case",
+        trigger: "monitor_rolling_reoptimize",
+      }),
+    });
+    state.approval = state.task.approval;
+    state.monitor = await request("/api/monitor/status");
+    await loadMonitorTask(taskId);
+    renderMonitor();
+    const mode = state.language === "zh" ? "worst_case 鲁棒模式" : "worst_case robust mode";
+    toast(`滚动重优化完成 → V${state.task.task_version}；${mode}`);
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function setupEvents() {
+  $("#run-button")?.addEventListener("click", runDemo);
+  $("#new-session-button")?.addEventListener("click", startNewSession);
+  $("#approve-b")?.addEventListener("click", approveCandidateB);
+  $("#execute-b")?.addEventListener("click", executeCandidateB);
+  $("#rollback-button")?.addEventListener("click", runRollback);
+  $("#upload-energy-data").addEventListener("click", () => $("#energy-csv-file").click());
+  $("#energy-csv-file").addEventListener("change", (event) => uploadEnergyCsv(event.target.files?.[0]));
+  $("#test-demo-data").addEventListener("click", testDemoDataConnection);
+  $("#test-live-data").addEventListener("click", testLiveDataConnection);
+  $("#connect-energy-source").addEventListener("click", async () => {
+    setConnectorStatus("正在检查本地服务状态…", [{ kind: "CONNECTING", detail: "检查监测服务及当前回放状态。" }]);
+    try {
+      const resp = await request("/api/monitor/status");
+      state.monitor = resp;
+      if (resp?.running) {
+        setConnectorStatus("本地监测服务正在运行", [{ kind: "LIVE_DATA_CONNECTED", detail: "监测服务正在读取本地数据流。" }]);
+        toast("本地监测服务正在运行");
+      } else {
+        setConnectorStatus("监测服务当前空闲，可先载入样本或上传 CSV", [{ kind: "LIVE_DATA_IDLE", detail: "本地监测服务尚未启动。" }]);
+        toast("监测服务当前空闲");
+      }
+    } catch {
+      setConnectorStatus("无法读取本地服务状态", [{ kind: "LIVE_DATA_ERROR", detail: "检查应用服务是否运行后重试。" }]);
+      toast("无法读取本地服务状态");
+    }
+  });
+  $("#replay-slider")?.addEventListener("input", async (event) => {
+    await setReplayCursor(event.currentTarget.value);
+  });
+  $("#replay-speed-slider")?.addEventListener("input", async (event) => {
+    state.replaySpeedIndex = Number(event.currentTarget.value) || 0;
+    window.localStorage.setItem("powerpilot.workspace.replaySpeedIndex.v2", String(state.replaySpeedIndex));
+    await startCampusReplay();
+  });
+  $("#nav-connect").addEventListener("click", () => {
+    setWorkspaceMode("nav-connect");
+    if (state.energySnapshot) setConnectorStatus(`当前样本：${state.energySnapshot.telemetry.length} 个时段，可调整时间与速度。`);
+    $("#connector-dialog").showModal();
+  });
+  $("#monitor-approve").addEventListener("click", approveMonitorPlan);
+  $("#monitor-execute").addEventListener("click", executeMonitorPlan);
+  $("#monitor-evidence").addEventListener("click", openEvidence);
+  $("#monitor-rolling").addEventListener("click", rollingReoptimizeMonitor);
+  $("#adopt-flow-plan").addEventListener("click", adoptFlowPlan);
+  $("#reject-flow-plan").addEventListener("click", rejectFlowPlan);
+  $("#open-evidence").addEventListener("click", openEvidence);
+  $("#review-candidates").addEventListener("click", reviewCandidates);
+  $("#translate-button").addEventListener("click", toggleLanguage);
+  $("#nav-overview").addEventListener("click", openHome);
+  $("#nav-workspace").addEventListener("click", openNewWorkspace);
+  $("[data-ledger-summary=\"today\"]").addEventListener("click", openTodayLedger);
+  $("#assistant-close").addEventListener("click", () => { $("#assistant-drawer").hidden = true; });
+  $("#nav-agents").addEventListener("click", () => {
+    setWorkspaceMode("nav-agents");
+    setOpsDrawer(false);
+    setAgentDirectory($("#agent-directory-drawer").hidden);
+    setActiveRail("nav-agents");
+  });
+  $("#nav-ops").addEventListener("click", () => {
+    setWorkspaceMode("nav-ops");
+    setOpsDrawer($("#ops-drawer").hidden);
+  });
+  $("#nav-trace").addEventListener("click", () => {
+    setWorkspaceMode("nav-trace");
+    scrollWithin($("#nav-trace"), "#trace-list");
+  });
+  $("#nav-chat").addEventListener("click", () => {
+    setWorkspaceMode("nav-chat");
+    $("#assistant-drawer").hidden = false;
+    $("#ai-chat-input").focus();
+  });
+  $("#nav-safety").addEventListener("click", () => {
+    setWorkspaceMode("nav-safety");
+    runRollback();
+  });
+  $("#agent-directory-close").addEventListener("click", () => setAgentDirectory(false));
+  $("#ops-drawer-close").addEventListener("click", () => setOpsDrawer(false));
+  $("#active-agent-gateway").addEventListener("click", () => openGateway());
+  $("#ai-chat-form").addEventListener("submit", sendChatMessage);
+  $$(".directory-chat").forEach((button) => {
+    button.addEventListener("click", () => selectAgent(button.closest("[data-agent-id]").dataset.agentId));
+  });
+  $$(".directory-gateway").forEach((button) => {
+    button.addEventListener("click", () => openGateway(button.closest("[data-agent-id]").dataset.agentId));
+  });
+  $("#gateway-form").addEventListener("submit", saveGateway);
+  $("#gateway-test").addEventListener("click", testGatewayConnection);
+  $$("[data-station-tab]").forEach((button) => {
+    button.addEventListener("click", () => setStationView(button.dataset.stationTab));
+  });
+  $$("[data-device-id]").forEach((button) => {
+    button.addEventListener("click", () => renderDeviceDetail(button.dataset.deviceId));
+  });
+  $$("[data-signal-mode]").forEach((button) => {
+    button.addEventListener("click", () => setDeviceMode(button.dataset.signalMode));
+  });
+  $$("[data-device-view-mode]").forEach((button) => {
+    button.addEventListener("click", () => setDeviceMode(button.dataset.deviceViewMode));
+  });
+  $("#chat-messages").addEventListener("click", (event) => {
+    const confirmButton = event.target.closest("[data-confirm-scenario]");
+    if (confirmButton) {
+      if (confirmButton.dataset.confirmScenario === "flow_preview") {
+        adoptFlowPlan();
+        return;
+      }
+      confirmScenarioExecution();
+      return;
+    }
+    const deferButton = event.target.closest("[data-defer-scenario]");
+    if (deferButton) {
+      if (deferButton.dataset.deferScenario === "flow_preview") {
+        rejectFlowPlan();
+        return;
+      }
+      deferScenarioExecution();
+    }
+  });
+  $$("[data-open-workspace]").forEach((card) => {
+    card.addEventListener("click", () => openWorkspaceFromHistory(card.dataset.openWorkspace));
+  });
+  $$("[data-close-dialog]").forEach((button) => {
+    button.addEventListener("click", () => $(`#${button.dataset.closeDialog}`).close());
+  });
+  window.addEventListener("resize", () => {
+    
+    drawHomeCharts();
+  });
+}
+
+
+const pageContent = {
+  overview: ["运行总览", "看清能量，掌握每一步。", "从一份数据开始，让负荷、储能和调度决策清晰可见。", "YOUR ENERGY, IN FOCUS"],
+  analysis: ["能效分析", "让每一度电，更有价值。", "在相同输入与约束下，比较基线和候选方案的功率与费用。", "PERFORMANCE / DAILY REVIEW"],
+  planning: ["方案与审计", "每个决定，都有依据。", "查看候选方案、独立审计与人工确认，再进行本地模拟。", "DECISIONS / AUDIT TRAIL"],
+  records: ["场景档案", "记录变化，复盘决策。", "按运行日期回看能源收支，或开启一次可重复的本地演练。", "RECORDS / RUN LIBRARY"],
+};
+function updatePageLabels() {
+  const page = document.body.dataset.page || "overview";
+  const labels = pageContent[page] || pageContent.overview;
+  $("#page-location").textContent = labels[0];
+  $("#page-heading").textContent = labels[1];
+  $("#page-description").textContent = labels[2];
+  $("#page-eyebrow").textContent = labels[3];
+}
+function showPage(page) {
+  const changed = document.body.dataset.page !== page;
+  document.body.dataset.page = page;
+  $("#home-view").hidden = page !== "records";
+  $(".app-shell").classList.toggle("home-mode", page === "records");
+  setActiveRail({ overview: "nav-workspace", analysis: "nav-analysis", planning: "nav-trace", records: "nav-overview" }[page]);
+  $$("[data-workspace-page]").forEach((button) => button.classList.toggle("selected", button.dataset.workspacePage === page));
+  updatePageLabels();
+  if (changed) window.scrollTo({ top: 0, behavior: "instant" });
+  requestAnimationFrame(() => { renderPowerChart(); renderCsvCostComparison(); drawHomeCharts(); state.campus3d?.resize?.(); });
+}
+async function loadLocalSample() {
+  const button = $("#load-local-sample");
+  button.disabled = true;
+  const label = button.textContent;
+  button.textContent = "正在载入…";
+  try {
+    const response = await fetch("/api/data/opencem/sample.csv");
+    if (!response.ok) throw new Error("本地样本读取失败");
+    await uploadEnergyCsv(new File([await response.blob()], "powerpilot-sample.csv", { type: "text/csv" }));
+    $("#connector-dialog").close();
+    showPage("overview");
+  } catch (error) { toast(error.message); }
+  finally { button.disabled = false; button.textContent = label; }
+}
+agentIntroMessages.team_leader.zh = translations.zh.chatIntro;
+agentIntroMessages.team_leader.en = translations.en.chatIntro;
+$("#load-local-sample").addEventListener("click", loadLocalSample);
+$("#nav-analysis").addEventListener("click", () => showPage("analysis"));
+$$("[data-workspace-page]").forEach((button) => button.addEventListener("click", () => showPage(button.dataset.workspacePage)));
+[$("#help-button"), $("#quick-help")].forEach((button) => button.addEventListener("click", () => $("#help-dialog").showModal()));
+$("#record-search").addEventListener("input", (event) => {
+  const query = event.target.value.trim().toLowerCase();
+  $$(".history-card").forEach((card) => { card.hidden = query !== "" && !card.textContent.toLowerCase().includes(query); });
+});
+
+drawHomeCharts();
+setupCampus();
+setupEvents();
+renderDeviceDetail("pcs");
+loadGateways();
+renderSelectedAgent();
+applyLanguage(window.localStorage.getItem("powerpilot.workspace.language") === "en" ? "en" : "zh");
+restoreLatestDemo();
+restoreEnergyDataConnection();
+localStorage.removeItem("powerpilot.workspace.parallelState");
+renderPlanLedger();
+renderReplayControl();
+renderCsvCostComparison();
+restoreAgentTeamsTaskMirror();
+// Restore chat history from localStorage
+const savedThreads = localStorage.getItem("powerpilot.workspace.agentThreads");
+if (savedThreads) {
+  try {
+    state.agentThreads = repairSavedAgentThreads(JSON.parse(savedThreads));
+    localStorage.setItem("powerpilot.workspace.agentThreads", JSON.stringify(state.agentThreads));
+    renderAgentThread(state.selectedAgent);
+  } catch(e) {}
+}
+restoreParallelHistory();
+startLiveCharts();

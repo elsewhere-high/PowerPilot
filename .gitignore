@@ -1,0 +1,35 @@
+# Local environments and credentials
+.conda-env/
+.venv/
+.env
+.env.*
+!.env.example
+
+# Generated Python and build output
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+
+# Local application state
+var/
+runs/
+.data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+
+# Local editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+*.swp

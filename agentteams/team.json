@@ -1,0 +1,34 @@
+{
+  "framework": "agentscope-ai/AgentTeams",
+  "api_version": "agentteams.io/v1beta1",
+  "framework_repository": "https://github.com/agentscope-ai/AgentTeams",
+  "declarative_resources": "agentteams/agentteams-resources.yaml",
+  "team_name": "powerpilot-park-control",
+  "coordination_owner": "AgentTeams Team Leader",
+  "domain_tools_owner": "PowerPilot MCP backends",
+  "human_in_the_loop": true,
+  "leader": {
+    "resource": "powerpilot-team-leader",
+    "role": "team_leader"
+  },
+  "workers": [
+    "perception-worker",
+    "dispatch-worker",
+    "audit-worker",
+    "execution-worker"
+  ],
+  "skills": [
+    "microgrid_context_ingest",
+    "dispatch_plan_generate",
+    "dispatch_audit_verify",
+    "execution_mapping",
+    "approval_rollback"
+  ],
+  "planned_higress_mcp_servers": [
+    "powerpilot-readonly",
+    "powerpilot-planning",
+    "powerpilot-audit",
+    "powerpilot-control"
+  ],
+  "runtime_status": "assets_pending_live_agentteams_apply"
+}

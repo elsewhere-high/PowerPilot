@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#102d32" />
+  <meta name="description" content="PowerPilot 本地能源工作台。观察负荷与储能，比较调度方案，复核并模拟执行。" />
+  <title>PowerPilot · 能源工作台</title>
+  <link rel="icon" type="image/svg+xml" href="/static/brand/powerpilot-mark.svg" />
+  <link rel="stylesheet" href="/static/styles.css?v=powerpilot-initial" />
+</head>
+<body data-page="overview">
+  <aside class="sidebar" aria-label="PowerPilot 主导航">
+    <a class="brand" href="/"><img src="/static/brand/powerpilot-mark.svg" alt="" width="36" height="36" /><div><strong>PowerPilot</strong><small>ENERGY WORKSPACE</small></div></a>
+    <div class="sidebar-label">工作空间</div>
+    <nav class="icon-rail"><button id="nav-workspace" class="rail-item active" type="button" aria-label="运行总览"><span aria-hidden="true">◈</span><b data-i18n="nav_overview">运行总览</b></button>
+<button id="nav-analysis" class="rail-item" type="button" aria-label="能效分析"><span aria-hidden="true">↗</span><b data-i18n="nav_analysis">能效分析</b></button>
+<button id="nav-trace" class="rail-item" type="button" aria-label="方案与审计"><span aria-hidden="true">≡</span><b data-i18n="nav_planning">方案与审计</b></button>
+<button id="nav-overview" class="rail-item" type="button" aria-label="场景档案"><span aria-hidden="true">▤</span><b data-i18n="nav_records">场景档案</b></button>
+<button id="nav-connect" class="rail-item" type="button" aria-label="数据工作台"><span aria-hidden="true">⇄</span><b data-i18n="nav_data">数据工作台</b></button>
+<button id="nav-agents" class="rail-item" type="button" aria-label="能力与模型"><span aria-hidden="true">◇</span><b data-i18n="nav_agents">能力与模型</b></button>
+<button id="nav-ops" class="rail-item" type="button" aria-label="运行详情"><span aria-hidden="true">⊞</span><b data-i18n="nav_operations">运行详情</b></button>
+<button id="nav-chat" class="rail-item" type="button" aria-label="询问助理"><span aria-hidden="true">✧</span><b data-i18n="nav_assistant">询问助理</b></button></nav>
+    <div class="sidebar-bottom">
+      <button id="nav-safety" class="rail-item" type="button"><span aria-hidden="true">↶</span><b>回退演练</b></button>
+      <button id="help-button" class="rail-item" type="button"><span aria-hidden="true">?</span><b>使用指南</b></button>
+      <button id="translate-button" class="rail-item" type="button" aria-label="Switch to English">English</button>
+      <div class="local-workspace"><i></i><div><strong>本地工作空间</strong><small>SIMULATION ONLY</small></div></div>
+    </div>
+  </aside>
+  <main class="app-shell">
+    <header class="app-topbar"><div class="breadcrumb">PowerPilot <span>/</span> <strong id="page-location">运行总览</strong></div><div class="topbar-actions"><span class="environment-tag"><i></i>本地仿真</span><button id="quick-help" class="icon-button" type="button" aria-label="打开使用指南">?</button></div></header>
+    <section class="page-intro"><div><span class="eyebrow" id="page-eyebrow">YOUR ENERGY, IN FOCUS</span><h1 id="page-heading">看清能量，掌握每一步。</h1><p id="page-description">从一份数据开始，让负荷、储能和调度决策清晰可见。</p></div><div class="intro-actions"><button id="load-local-sample" class="primary" type="button">载入本地样本 <span aria-hidden="true">↗</span></button><button id="run-button" type="button">生成调度演练</button></div></section>
+    <div class="workspace-tabs" role="group" aria-label="工作台视图"><button type="button" data-workspace-page="overview" class="selected">能源网络</button><button type="button" data-workspace-page="analysis">能效分析</button><button type="button" data-workspace-page="planning">方案与审计</button><span>15 分钟 / 96 时段</span></div>
+          <section id="home-view" class="home-view" aria-label="Task history" hidden>
+        <header class="home-title">
+          <div>
+            <h1 data-i18n="homeTitle">场景档案</h1>
+            <p data-i18n="homeSubtitle">按运行日期查看数据与调度记录</p>
+          </div>
+          <label class="home-search">
+            <span>⌕</span>
+            <input id="record-search" data-i18n-placeholder="homeSearchPlaceholder" placeholder="Search tasks" />
+          </label>
+          <button id="new-session-button" class="secondary" type="button">开启新会话</button>
+        </header>
+        <div class="insight-board daily-ledger">
+          <section class="day-group today-group" data-day-group="today">
+            <header>
+              <div><strong id="today-ledger-date">今天</strong><span>实时运行日</span></div>
+              <small id="today-ledger-status">等待园区接入</small>
+            </header>
+            <article class="history-card ledger-summary" data-ledger-summary="today">
+              <div class="history-body">
+                <div class="history-tags"><span class="tag">Today</span><span id="today-ledger-source">No live feed</span></div>
+                <h2>今日电力调度与使用情况</h2>
+                <time id="today-ledger-time">00:00-24:00 · 96 点计划</time>
+                <p id="today-ledger-copy">载入本地样本后，这里归集当日的能量收支、方案变更和模拟回执。</p>
+                <div class="history-metrics">
+                  <span id="today-ledger-load">Load --</span>
+                  <span id="today-ledger-cost">Cost --</span>
+                  <span id="today-ledger-runs">0 runs</span>
+                </div>
+              </div>
+            </article>
+          </section>
+          <section class="day-group" data-day-group="demo">
+            <header>
+              <div><strong>调度演练</strong><span>PowerPilot 示例</span></div>
+              <small>按需生成 · 本地模拟</small>
+            </header>
+            <article class="history-card active" data-open-workspace="weather">
+              <canvas class="mini-chart" data-seed="0" aria-label="PowerPilot 场景示意图"></canvas>
+              <div class="history-body">
+                <div class="history-tags"><span class="tag critical" data-i18n="historyCritical">调度演练</span><span data-i18n="historyTraceReady">可查看步骤</span></div>
+                <h2 data-i18n="historyWeatherTitle">午后负荷变化 · 调度演练</h2>
+                <time>PP-DEMO-001 · 午后负荷变化</time>
+                <p data-i18n="historyWeatherText">在固定的午后场景中比较三套调度方案，查看约束复核、人工确认与模拟回执。演练可以重复运行。</p>
+                <div class="history-metrics">
+                  <span>约束校验</span>
+                  <span>人工确认</span>
+                  <span>审计记录</span>
+                </div>
+              </div>
+            </article>
+          </section>
+        </div>
+      </section>
+
+
+          <section class="visual-pane" id="workspace-content" aria-label="Dispatch visualization">
+        <header class="visual-title">
+          <div>
+            <h1 data-i18n="visualTitle">运行快照</h1>
+          </div>
+          <div class="run-status">
+            <span data-i18n="taskLabel">当前任务</span>
+            <strong id="task-id">未创建</strong>
+          </div>
+        </header>
+
+        <div class="control-bar">
+          <div class="monitor-info" aria-label="Monitor state">
+            <i id="monitor-pulse"></i>
+            <span>回放 <strong id="monitor-state">IDLE</strong></span>
+            <span>方案 <strong id="monitor-plan">V1</strong></span>
+            <span>协作 <strong id="monitor-agents">SLEEPING</strong></span>
+            <span id="monitor-interval">--</span>
+          </div>
+          <div class="monitor-gate">
+            <button id="monitor-approve" type="button" disabled data-i18n="monitorApprove">人工确认 V2</button>
+            <button id="monitor-execute" type="button" disabled data-i18n="monitorExecute">执行已批准计划</button>
+            <button id="monitor-evidence" type="button" disabled data-i18n="monitorEvidence">查看证据</button>
+            <button id="monitor-rolling" type="button" disabled data-i18n="monitorRolling">滚动重优化</button>
+          </div>
+          <span id="task-state">IDLE</span>
+        </div>
+
+        <section id="agentteams-task-panel" hidden class="agentteams-task-panel" aria-label="Live AgentTeams task mirror">
+          <header>
+            <div>
+              <span>协作任务详情</span>
+              <strong id="agentteams-task-title">等待调度请求</strong>
+            </div>
+            <small id="agentteams-task-mode">外部协作配置后显示</small>
+          </header>
+          <div class="agentteams-task-grid">
+            <div><span>Project</span><strong id="agentteams-project-id">--</strong></div>
+            <div><span>Task</span><strong id="agentteams-runtime-task-id">--</strong></div>
+            <div><span>Team Room</span><strong id="agentteams-team-room-id">--</strong></div>
+            <div><span>Worker</span><strong id="agentteams-worker-id">--</strong></div>
+            <div><span>World State</span><strong id="agentteams-world-state">等待</strong></div>
+            <div><span>Status</span><strong id="agentteams-task-status">IDLE</strong></div>
+          </div>
+          <div id="agentteams-timeline" class="agentteams-timeline"></div>
+        </section>
+
+        <div class="energy-status">
+          <article class="status-balance"><span data-i18n="statusBalance">仿真预算余量</span><strong id="campus-balance">未载入数据</strong><small data-i18n="statusBalanceNote">演示预算 ¥10,000</small></article>
+          <article class="status-load"><span data-i18n="statusLoad">负荷需求</span><strong id="campus-load">-- kW</strong><small data-i18n="statusLoadNote">当前回放时段的用电功率</small></article>
+          <article class="status-gen"><span data-i18n="statusGen">光伏出力</span><strong id="campus-generation">-- kW</strong><small data-i18n="statusGenNote">当前回放时段的发电功率</small></article>
+          <article class="status-storage"><span data-i18n="statusStorage">储能状态</span><strong id="campus-storage">--</strong><small id="campus-storage-flow">--</small></article>
+          <article class="status-grid"><span data-i18n="statusGrid">电网输入</span><strong id="campus-grid-import">-- kW</strong><small data-i18n="statusGridNote">由电网补充的购电功率</small></article>
+        </div>
+
+        <div class="energy-main"><div class="network-heading"><div><span class="eyebrow">ENERGY NETWORK</span><h2>每一份能量，都有清晰的去向</h2></div><span class="network-badge">3D 交互视图</span></div>
+          <div class="campus">
+            <canvas id="campus-3d" aria-label="PowerPilot 能源网络"></canvas>
+            <div class="campus-day-hud" id="campus-day-hud">
+              <div class="day-clock"><span>当前时间</span><strong id="campus-current-time">未载入数据</strong><small id="campus-time-sync">未对时</small></div>
+              <div class="day-problems">
+                <article><span>未消纳电量</span><strong id="campus-waste-kwh">-- kWh</strong></article>
+                <article><span>购电支出</span><strong id="campus-extra-cost">--</strong></article>
+              </div>
+            </div>
+            <div class="campus-tools" aria-label="Campus editor tools">
+              <button id="reset-camera" class="camera-button" type="button" title="Reset camera" aria-label="Reset camera">⌂</button>
+              <button id="campus-edit-layout" type="button" aria-pressed="false">调整节点</button>
+              <button class="campus-add" type="button" data-campus-add="datacenter">添加负荷</button>
+              <button class="campus-add" type="button" data-campus-add="factory">添加生产单元</button>
+              <button class="campus-add" type="button" data-campus-add="generation">添加光伏</button>
+              <button class="campus-add" type="button" data-campus-add="storage">添加储能</button>
+              <button id="campus-delete" type="button">移除选中</button>
+            </div>
+            <div class="flow-preview-card" id="flow-preview-card" hidden>
+              <header>
+              <span>新方案预览</span>
+              <strong>储能优先消纳方案</strong>
+              </header>
+              <p id="flow-plan-reason">把白天未利用的发电更多存进储能，晚高峰由储能优先供给用电格，减少电网购电。</p>
+              <div class="flow-deltas">
+                <div><span>电网购电</span><strong id="delta-grid">--</strong></div>
+                <div><span>储能放电</span><strong id="delta-storage">--</strong></div>
+                <div><span>限发浪费</span><strong id="delta-curtail">--</strong></div>
+              </div>
+              <div class="flow-plan-actions">
+                <button id="reject-flow-plan" class="secondary" type="button">拒绝采用</button>
+                <button id="adopt-flow-plan" type="button">采用方案</button>
+              </div>
+            </div>
+            <div class="campus-hint">拖动平移 · 滚轮缩放 · 彩色流线表示能量方向，亮度随功率变化</div>
+            <article class="asset metric-card" data-anchor="factory"><span data-i18n="assetFactory">园区用电</span><strong id="asset-factory">-- kW</strong><small data-i18n="assetFactoryNote">等待数据接入</small></article>
+            <article class="asset metric-card" data-anchor="solar"><span data-i18n="assetSolar">自有发电</span><strong id="asset-solar">-- kW</strong><small data-i18n="assetSolarNote">等待数据接入</small></article>
+            <article class="asset metric-card critical" data-anchor="storage"><span data-i18n="assetStorageLabel">储能</span><strong id="asset-storage">SOC --%</strong><small data-i18n="assetStorageNote">等待数据接入</small></article>
+            <article class="asset warning" data-anchor="grid"><span data-i18n="assetGrid">Grid</span><strong id="asset-grid">-- kW</strong><small data-i18n="assetGridNote">import limited</small></article>
+          </div>
+        </div>
+
+        <div class="energy-bottom">
+          <div class="energy-today">
+            <h3 data-i18n="todayTitle">本日累计</h3>
+            <div class="today-grid">
+              <article><span data-i18n="todayLoad">本日累计用电</span><strong id="today-load">0.0 度</strong></article>
+              <article><span data-i18n="todayGen">本日累计发电</span><strong id="today-gen">0.0 度</strong></article>
+              <article><span data-i18n="todayGrid">本日累计购电</span><strong id="today-grid">0.0 度</strong></article>
+              <article><span data-i18n="todayCharge">今日储能充电</span><strong id="today-charge">0.0 度</strong></article>
+              <article><span data-i18n="todayDischarge">今日储能放电</span><strong id="today-discharge">0.0 度</strong></article>
+              <article><span data-i18n="todayCost">今日购电支出</span><strong id="today-cost">¥0.00</strong></article>
+            </div>
+          </div>
+          <div class="energy-balance">
+            <h3 data-i18n="balanceTitle">能量收支</h3>
+            <div class="balance-grid">
+              <div class="balance-in">
+                <h4 data-i18n="balanceInTitle">今日总用电</h4>
+                <div class="balance-amount"><strong id="balance-total-load">0.0</strong><span data-i18n="unitDegree">度</span></div>
+                <p data-i18n="balanceInFrom">其中：</p>
+                <ul>
+                  <li><span data-i18n="fromGen">自有发电直接供电</span><strong id="balance-from-gen">0.0 度</strong></li>
+                  <li><span data-i18n="fromStorage">储能放电供电</span><strong id="balance-from-storage">0.0 度</strong></li>
+                  <li><span data-i18n="fromGrid">公共电网购电</span><strong id="balance-from-grid">0.0 度</strong></li>
+                </ul>
+              </div>
+              <div class="balance-out">
+                <h4 data-i18n="balanceOutTitle">今日自有发电去向</h4>
+                <ul>
+                  <li><span data-i18n="toLoad">直接供园区使用</span><strong id="balance-to-load">0.0 度</strong></li>
+                  <li><span data-i18n="toStorage">给储能充电</span><strong id="balance-to-storage">0.0 度</strong></li>
+                  <li><span data-i18n="toGrid" id="balance-export-label">上网电量</span><strong id="balance-to-grid">0.0 度</strong></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <section class="cost-compare" aria-label="Parallel simulation cost comparison">
+          <header>
+            <h2>策略收益 · 同一份数据下的比较</h2>
+            <span id="parallel-status">等待数据</span>
+          </header>
+          <div class="cost-chart-layout">
+            <div class="cost-chart-wrap">
+              <canvas id="cost-chart" aria-label="Cumulative cost comparison: baseline vs Agent optimized"></canvas>
+              <div class="chart-legend">
+                <span class="legend-baseline">— 基线累计费用</span>
+                <span class="legend-optimized">— 方案累计费用</span>
+                <span class="legend-savings">▩ 节省区间</span>
+                <span class="legend-reopt">◆ 计划重优化</span>
+              </div>
+            </div>
+            <div class="cost-metrics">
+              <article class="compare-a">
+                <span>基线费用</span>
+                <strong id="cost-baseline">¥0.00</strong>
+              </article>
+              <article class="compare-b">
+                <span>方案费用</span>
+                <strong id="cost-optimized">¥0.00</strong>
+              </article>
+              <article class="compare-save">
+                <span>累计节省</span>
+                <strong id="cost-savings">¥0.00</strong>
+                <small id="savings-percent">节省 0%</small>
+              </article>
+              <div class="deviation-metrics">
+                <span>预测偏差</span>
+                <div><label>PV</label><strong id="deviation-pv">--%</strong></div>
+                <div><label>负荷</label><strong id="deviation-load">--%</strong></div>
+              </div>
+              <div class="reopt-metrics">
+                <span>计划失效重优化</span>
+                <strong id="reopt-count">0 次</strong>
+                <small id="reopt-reason">--</small>
+              </div>
+            </div>
+          </div>
+          <div class="compare-note">
+            <p>基线与方案采用相同输入。收益需结合约束复核；预测偏差触发新一轮方案评估。</p>
+          </div>
+        </section>
+
+        <section class="plan-ledger-section" aria-label="Adopted dispatch plan ledger">
+          <header>
+            <h2>决策记录</h2>
+            <span id="plan-ledger-count">0 条记录</span>
+          </header>
+          <div id="plan-ledger-list" class="plan-ledger-list">
+            <p class="empty">确认或放弃方案后，可在这里查看对应理由与预计变化。</p>
+          </div>
+        </section>
+
+        <section class="power-chart-section" aria-label="Real-time power curves">
+          <header><h2>一天的功率轨迹</h2></header>
+          <div class="power-chart-wrap">
+            <canvas id="power-chart"></canvas>
+          </div>
+          <div class="power-chart-legend">
+            <span class="legend-load">■ 园区用电 (kW)</span>
+            <span class="legend-pv">■ 光伏发电 (kW)</span>
+            <span class="legend-grid">■ 电网购电 (kW)</span>
+          </div>
+        </section>
+
+        <section class="related">
+          <header>
+            <h2 data-i18n="relatedTitle">方案检查</h2>
+            <span id="trace-count">0 events</span>
+          </header>
+          <div class="insight-grid">
+            <article class="insight">
+              <span data-i18n="taskVersionLabel">方案版本</span>
+              <strong id="task-version">--</strong>
+              <p id="context-hash">等待上下文快照</p>
+            </article>
+            <article class="insight">
+              <span data-i18n="riskGateLabel">人工确认</span>
+              <strong id="approval-status">Waiting</strong>
+              <p data-i18n="riskGateText">High-risk flexible-load actions require Human Operator approval.</p>
+            </article>
+            <article class="insight">
+              <span data-i18n="evidenceLabel">Evidence</span>
+              <strong id="evidence-status">Not sealed</strong>
+              <p data-i18n="evidenceText">运行记录, metrics, execution receipt, and SHA-256 package.</p>
+            </article>
+          </div>
+        </section>
+
+        <div class="plan-toolbar"><div><span class="eyebrow">HUMAN IN THE LOOP</span><h2>先复核，再批准</h2><p>演练方案须通过独立审计，并由你确认后才能模拟执行。</p></div><div class="button-group"><button id="rollback-button" type="button">回退演练</button><button id="approve-b" type="button" disabled>批准演练方案 B</button><button id="execute-b" class="primary" type="button" disabled>模拟执行</button></div></div><section class="detail-columns">
+          <div>
+            <div class="section-heading">
+              <h2 data-i18n="candidatePlansTitle">方案比较</h2>
+              <button id="review-candidates" class="mini-action" type="button" disabled data-i18n="focusButton">Focus</button>
+            </div>
+            <div id="candidate-list" class="candidate-list"><p class="empty" data-i18n="candidateEmpty">Run the scenario to generate audited candidates.</p></div>
+          </div>
+          <div>
+            <div class="section-heading">
+              <h2 data-i18n="traceTitle">运行记录</h2>
+              <button id="open-evidence" class="mini-action" type="button" disabled data-i18n="evidenceButton">Evidence</button>
+            </div>
+            <div id="trace-list" class="trace-list"><p class="empty" data-i18n="traceEmpty">Backend events will appear here.</p></div>
+          </div>
+        </section>
+      </section>
+
+    <footer class="workspace-footer"><span>PowerPilot · 每一次决策，均可复核。</span><span>本地模拟 / 不连接生产设备</span></footer>
+  </main>
+        <section id="assistant-drawer" class="brief-pane" hidden aria-label="Workspace brief">
+        <header class="workspace-title">
+          <strong data-i18n="workspaceTitle">PowerPilot 助理</strong>
+          <button id="assistant-close" class="icon-button" type="button" aria-label="关闭助理">×</button>
+        </header>
+
+        <section id="ai-chat-panel" class="ai-chat-panel">
+          <div class="chat-head">
+            <div>
+              <span id="active-agent-role">PowerPilot 调度助理</span>
+              <strong id="active-agent-name">Team Leader</strong>
+            </div>
+            <button id="active-agent-gateway" class="mini-close gateway-open" type="button" aria-label="Open model gateway" title="Model gateway">⚙</button>
+          </div>
+          <div id="chat-messages" class="chat-messages">
+            <article class="chat-message agent tone-leader">
+              <div class="chat-avatar">PP</div>
+              <div class="chat-content">
+                <header class="chat-message-head">
+                  <strong class="chat-speaker">Team Leader</strong>
+                </header>
+                <div class="chat-message-body">
+                  <p data-i18n="chatIntro">我是 PowerPilot 调度助理。连接你自己的模型后，可以一起分析数据、理解约束与讨论方案；模拟执行仍需人工确认。</p>
+                </div>
+              </div>
+            </article>
+          </div>
+          <div id="runtime-status" class="runtime-status-line" hidden><i></i><span>模型处理中</span></div>
+          <form id="ai-chat-form" class="chat-form">
+            <input id="ai-chat-input" autocomplete="off" data-i18n-placeholder="chatPlaceholder" placeholder="例如：帮我减少购电和限发，先预览新流向" />
+            <button class="action" type="submit" data-i18n="chatSend">Send</button>
+          </form>
+        </section>
+
+      </section>
+
+
+      <aside id="agent-directory-drawer" class="agent-directory-drawer" hidden aria-label="Agent directory">
+      <div class="drawer-head">
+        <div><span data-i18n="agentDirectory">Agent directory</span><strong data-i18n="workersLabel">Workers</strong></div>
+        <button id="agent-directory-close" class="icon-button" type="button" aria-label="Close Agent directory">×</button>
+      </div>
+      <div id="agent-directory-list" class="directory-list">
+        <article data-agent-id="team_leader">
+          <img src="/static/brand/powerpilot-mark.svg" alt="" />
+          <div><strong data-agent-name="team_leader">Team Leader</strong><span data-agent-role="team_leader">Task routing / supervision</span></div>
+          <button class="directory-chat" type="button" data-i18n="chatButton">Chat</button>
+          <button class="directory-gateway" type="button" data-i18n="gatewayButton">Gateway</button>
+        </article>
+        <article data-agent-id="perception_agent">
+          <img src="/static/brand/role-context.svg" alt="" />
+          <div><strong data-agent-name="perception_agent">Perception Worker</strong><span data-agent-role="perception_agent">Context validation</span></div>
+          <button class="directory-chat" type="button" data-i18n="chatButton">Chat</button>
+          <button class="directory-gateway" type="button" data-i18n="gatewayButton">Gateway</button>
+        </article>
+        <article data-agent-id="dispatch_agent">
+          <img src="/static/brand/role-planning.svg" alt="" />
+          <div><strong data-agent-name="dispatch_agent">方案规划</strong><span data-agent-role="dispatch_agent">候选方案生成</span></div>
+          <button class="directory-chat" type="button" data-i18n="chatButton">Chat</button>
+          <button class="directory-gateway" type="button" data-i18n="gatewayButton">Gateway</button>
+        </article>
+        <article data-agent-id="audit_agent">
+          <img src="/static/brand/role-review.svg" alt="" />
+          <div><strong data-agent-name="audit_agent">Audit Worker</strong><span data-agent-role="audit_agent">Independent safety audit</span></div>
+          <button class="directory-chat" type="button" data-i18n="chatButton">Chat</button>
+          <button class="directory-gateway" type="button" data-i18n="gatewayButton">Gateway</button>
+        </article>
+        <article data-agent-id="execution_agent">
+          <img src="/static/brand/role-simulation.svg" alt="" />
+          <div><strong data-agent-name="execution_agent">Execution Worker</strong><span data-agent-role="execution_agent">Approved command mapping</span></div>
+          <button class="directory-chat" type="button" data-i18n="chatButton">Chat</button>
+          <button class="directory-gateway" type="button" data-i18n="gatewayButton">Gateway</button>
+        </article>
+      </div>
+    </aside>
+
+    <aside id="ops-drawer" class="agent-directory-drawer ops-drawer" hidden aria-label="Operations evidence">
+      <div class="drawer-head">
+        <div><span>OPERATIONS</span><strong>运行核验</strong></div>
+        <button id="ops-drawer-close" class="icon-button" type="button" aria-label="Close operations evidence">×</button>
+      </div>
+      <div class="ops-drawer-body">
+        <section class="ops-status-strip">
+          <article><span>数据快照</span><strong id="ops-data-state">Waiting</strong></article>
+          <article><span>计划状态</span><strong id="ops-plan-state">--</strong></article>
+          <article><span>Agent 运行记录</span><strong id="ops-trace-count">0</strong></article>
+        </section>
+        <section class="ops-panel">
+          <header><span>BUSINESS LOOP</span><strong>从园区数据到执行回读</strong></header>
+          <ol id="ops-loop-list" class="ops-loop-list"></ol>
+        </section>
+        <section class="ops-panel">
+          <header><span>AGENTTEAMS</span><strong>职责、权限与交接</strong></header>
+          <div id="ops-agent-list" class="ops-agent-list"></div>
+        </section>
+        <section class="ops-panel">
+          <header><span>MCP / SKILL</span><strong>最小权限运行边界</strong></header>
+          <div id="ops-permission-list" class="ops-permission-list"></div>
+        </section>
+        <section class="ops-panel">
+          <header><span>运行记忆</span><strong>历史观察与本次判断</strong></header>
+          <p id="ops-rag-insight" class="ops-rag-insight">等待偏差记录。</p>
+          <div class="ops-memory-grid">
+            <article><span>偏差事件</span><strong id="ops-memory-deviation">0</strong></article>
+            <article><span>人工调整</span><strong id="ops-memory-human">0</strong></article>
+            <article><span>结果回写</span><strong id="ops-memory-outcome">0</strong></article>
+          </div>
+        </section>
+        <section class="ops-panel">
+          <header><span>SLO</span><strong>运行门槛</strong></header>
+          <div id="ops-slo-list" class="ops-slo-list"></div>
+        </section>
+      </div>
+    </aside>
+
+    <dialog id="trace-dialog">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <div><span>TRACE DETAIL</span><h2 id="trace-dialog-title">Event detail</h2></div>
+          <button class="icon-button" type="button" data-close-dialog="trace-dialog">×</button>
+        </div>
+        <pre id="trace-json"></pre>
+      </form>
+    </dialog>
+    <dialog id="candidate-dialog">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <div><span>AUDIT VERDICT</span><h2 id="candidate-dialog-title">方案详情</h2></div>
+          <button class="icon-button" type="button" data-close-dialog="candidate-dialog">×</button>
+        </div>
+        <pre id="candidate-json"></pre>
+      </form>
+    </dialog>
+    <dialog id="evidence-dialog">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <div><span>POWERPILOT / RECORD</span><h2>PowerPilot 运行记录</h2></div>
+          <button class="icon-button" type="button" data-close-dialog="evidence-dialog">×</button>
+        </div>
+        <pre id="evidence-json"></pre>
+      </form>
+    </dialog>
+    <dialog id="gateway-dialog">
+      <form method="dialog" id="gateway-form">
+        <div class="dialog-heading">
+          <div><span>POWERPILOT / MODELS</span><h2 id="gateway-title">模型连接</h2></div>
+          <button class="icon-button" type="button" data-close-dialog="gateway-dialog">×</button>
+        </div>
+        <div class="gateway-body">
+          <label><span data-i18n="gatewayBaseUrl">Base URL</span><input id="gateway-base-url" value="https://api.deepseek.com" /></label>
+          <label><span data-i18n="gatewayApiKey">API Key</span><input id="gateway-api-key" type="password" placeholder="sk-..." autocomplete="off" /></label>
+          <label><span data-i18n="gatewayModel">Model</span><input id="gateway-model" value="deepseek-chat" /></label>
+          <div class="gateway-actions">
+            <button class="action" type="button" id="gateway-test" data-i18n="gatewayTest">Test</button>
+            <button class="action primary" type="submit" data-i18n="gatewaySave">Save gateway</button>
+          </div>
+          <p id="gateway-status" data-i18n="gatewayStored">Gateway settings are stored locally for now.</p>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="connector-dialog">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <div><span>POWERPILOT / DATA</span><h2>数据工作台</h2></div>
+          <button class="icon-button" type="button" data-close-dialog="connector-dialog">×</button>
+        </div>
+        <div class="gateway-body connector-copy">
+          <input id="energy-csv-file" type="file" accept=".csv,text/csv" hidden />
+          <button id="connect-energy-source" class="full-width" type="button">检查本地回放服务</button>
+          <div class="upload-section">
+            <button id="upload-energy-data" class="secondary" type="button">上传 CSV 数据</button>
+            <div class="replay-control" id="replay-control">
+              <div class="replay-head">
+                <span>数据时间回放</span>
+                <strong id="replay-readout">未载入数据</strong>
+              </div>
+              <label class="replay-row">
+                <span>当前时段</span>
+                <input id="replay-slider" type="range" min="0" max="95" value="0" />
+              </label>
+              <label class="replay-row">
+                <span>回放速度</span>
+                <input id="replay-speed-slider" type="range" min="0" max="3" step="1" value="0" />
+              </label>
+              <div class="replay-scale"><span>左：正常时钟</span><span>中：1秒=1分钟</span><span>右：更快</span></div>
+            </div>
+          </div>
+          <div class="connector-status">
+            <span id="monitor-source-note">尚未载入样本</span>
+            <div id="monitor-event-list" class="monitor-event-list">
+              <p>回放数据在本地处理。模型服务按需配置。</p>
+            </div>
+          </div>
+          <p class="help-note">上传的数据按 15 分钟归一化为 96 个时段。回放仅在本地进行；采样不完整时会提示补齐数据。</p>
+          <div class="gateway-actions connector-test-actions">
+            <button id="test-demo-data" class="action" type="button">检查样本状态</button>
+            <button id="test-live-data" class="action" type="button">检查服务状态</button>
+          </div>
+        </div>
+      </form>
+    </dialog>
+
+  <dialog id="help-dialog"><div class="dialog-heading"><div><span>POWERPILOT GUIDE</span><h2>从数据到决策</h2></div><button class="icon-button" data-close-dialog="help-dialog" type="button" aria-label="关闭指南">×</button></div><div class="help-body"><ol class="guide-steps"><li><strong>01 · 查看能源网络</strong><p>载入内置样本，或在数据工作台上传 CSV。回放时钟会同步负荷、光伏、储能和购电数据。</p></li><li><strong>02 · 比较与复核</strong><p>能效分析展示同一输入下的费用和功率。生成调度演练后，在方案与审计中检查候选方案和约束结论。</p></li><li><strong>03 · 确认后模拟</strong><p>独立审计通过的演练方案仍需人工批准。模拟执行后可查看回执；输入变化会重新触发审核和审批。</p></li></ol><div class="help-note">模型对话需要你自行配置服务。内置样本和调度演练可在本地使用；当前版本不控制真实设备。</div><a class="text-link" href="/docs" target="_blank" rel="noopener">打开 PowerPilot API 文档 ↗</a></div></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/static/app.js?v=powerpilot-initial"></script>
+</body>
+</html>
