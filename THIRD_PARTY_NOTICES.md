@@ -1,6 +1,6 @@
 # PowerPilot 第三方资源说明
 
-项目自身使用 MIT 许可，署名见根目录 LICENSE。以下资源保留各自的许可和署名。
+项目自身使用 AGPL-3.0-only 许可，署名见根目录 LICENSE。以下资源保留各自的许可和署名。
 
 ## Three.js
 

@@ -49,5 +49,6 @@ make build
 
 ## 许可
 
-PowerPilot 使用 [MIT License](LICENSE)，Copyright (c) 2026 Ustinian。
+PowerPilot 使用 [GNU AGPL v3（仅第 3 版）](LICENSE)，SPDX 标识为 `AGPL-3.0-only`。
+Copyright (C) 2026 Ustinian5。
 随包资源的独立声明见 [第三方资源说明](THIRD_PARTY_NOTICES.md)。
